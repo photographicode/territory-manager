@@ -34,6 +34,23 @@ export default function CardsStep({ project, update }: PageProps) {
     };
   }, [t, s]);
 
+  /** Open the PDF in a new tab for printing; the tab is opened first so pop-up blockers allow it. */
+  async function openPdf(list: typeof ts) {
+    const win = window.open('', '_blank');
+    setBusy(`Rendering 0 / ${list.length}…`);
+    try {
+      const bytes = await cardsPdf(list, s, (n) => setBusy(`Rendering ${n} / ${list.length}…`));
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      if (win) win.location.href = url;
+      else download(`${base}.pdf`, bytes, 'application/pdf');
+    } catch (e) {
+      win?.close();
+      alert(`Could not make the PDF: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function pdf(list: typeof ts, name: string) {
     setBusy(`Rendering 0 / ${list.length}…`);
     try {
@@ -102,9 +119,18 @@ export default function CardsStep({ project, update }: PageProps) {
             here before printing, so phones can open the QR codes.
           </p>
         )}
+        <h3>Print</h3>
+        <div className="dl-list">
+          <button className="btn primary" disabled={!!busy} onClick={() => openPdf(ts)}>
+            Open PDF of all {ts.length} cards
+          </button>
+          <button className="btn" disabled={!!busy} onClick={() => openPdf([t])}>
+            Open PDF of the card shown
+          </button>
+        </div>
         <h3>Download</h3>
         <div className="dl-list">
-          <button className="btn primary" disabled={!!busy} onClick={() => pdf(ts, `${base}.pdf`)}>
+          <button className="btn" disabled={!!busy} onClick={() => pdf(ts, `${base}.pdf`)}>
             All {ts.length} cards in one PDF
           </button>
           <button className="btn" disabled={!!busy} onClick={separatePdfs}>

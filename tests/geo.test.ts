@@ -30,3 +30,16 @@ describe('cut and merge', () => {
     expect(splitByLine(square, [[76.305, 9.87], [76.305, 9.885]])).toHaveLength(1);
   });
 });
+
+describe('ponds', () => {
+  it('makes a small pond part of the territory but keeps a large lake out', async () => {
+    const { fillPondsInAreas } = await import('../src/geo/core');
+    const pond = [[76.304, 9.884], [76.3045, 9.884], [76.3045, 9.8845], [76.304, 9.8845], [76.304, 9.884]]; // ~55 m square
+    const lake = [[76.301, 9.881], [76.309, 9.881], [76.309, 9.889], [76.301, 9.889], [76.301, 9.881]]; // ~870 m square
+    const withPond: Area = { type: 'Polygon', coordinates: [square.coordinates[0], pond] };
+    const withLake: Area = { type: 'Polygon', coordinates: [square.coordinates[0], lake] };
+    const [a, b] = fillPondsInAreas([withPond, withLake]);
+    expect((a as GeoJSON.Polygon).coordinates).toHaveLength(1);
+    expect((b as GeoJSON.Polygon).coordinates).toHaveLength(2);
+  });
+});

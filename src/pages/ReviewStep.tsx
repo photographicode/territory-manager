@@ -3,7 +3,7 @@ import L from 'leaflet';
 import '@geoman-io/leaflet-geoman-free';
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
 import type { PageProps } from '../App';
-import { areasTouch, BuildingIndex, countBuildings, mergeAreas, splitByLine, suggestLocality, sweepOrder } from '../geo/core';
+import { areasTouch, BuildingIndex, countBuildings, fillPondsInAreas, mergeAreas, splitByLine, suggestLocality, sweepOrder } from '../geo/core';
 import { loadOsm } from '../store';
 import { colorFor, createMap, toLatLngs } from '../map';
 import { uid, type Area, type OsmData, type Territory } from '../types';
@@ -243,6 +243,16 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
         <div className="toolbar small">
           <button className="btn ghost" onClick={renumber}>
             Renumber N→S
+          </button>
+          <button
+            className="btn ghost"
+            title="Make small ponds inside a territory part of it instead of a hole"
+            onClick={() => {
+              const filled = fillPondsInAreas(territories.map((t) => t.geometry));
+              update((p) => ({ ...p, territories: p.territories.map((t, i) => ({ ...t, geometry: filled[i] })) }), true);
+            }}
+          >
+            Include ponds
           </button>
           <button className="btn ghost" onClick={() => suggestNames(true)} title="Fill empty localities from OpenStreetMap place names">
             Suggest localities

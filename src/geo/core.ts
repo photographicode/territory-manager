@@ -121,7 +121,16 @@ export function union(geoms: G[]): G {
   }
 }
 
-/** Merge pieces with fewer than `min` buildings into the neighbour they share the longest border with. */
+/** 1 for a circle, lower for long or ragged shapes (Polsby–Popper). */
+function compactness(g: G): number {
+  const p = g.getLength();
+  return p ? (4 * Math.PI * g.getArea()) / (p * p) : 0;
+}
+
+/**
+ * Merge pieces with fewer than `min` buildings into a neighbour. Prefers the neighbour that keeps
+ * the joined territory compact and shares a long border, so leftovers don't wrap around others.
+ */
 function mergeSmall(pieces: Piece[], min: number, max: number): Piece[] {
   const ps = [...pieces];
   for (;;) {
@@ -131,15 +140,20 @@ function mergeSmall(pieces: Piece[], min: number, max: number): Piece[] {
       .sort((a, b) => a.p.n - b.p.n || a.p.g.getArea() - b.p.g.getArea());
     let merged = false;
     for (const { p, i } of small) {
+      const perimeter = p.g.getLength();
       const nbs = ps
         .map((q, j) => ({ q, j, len: j === i ? 0 : sharedLength(p.g, q.g) }))
         .filter((x) => x.len > 0);
       if (!nbs.length) continue;
       const fits = nbs.filter((x) => x.q.n + p.n <= max);
-      const pool = fits.length ? fits : nbs;
-      pool.sort((a, b) => (fits.length ? b.len - a.len : a.q.n - b.q.n));
+      const pool = (fits.length ? fits : nbs).map((x) => {
+        const g = union([x.q.g, p.g]);
+        const over = Math.max(0, x.q.n + p.n - max) / max;
+        return { ...x, g, score: 0.5 * Math.min(1, x.len / perimeter) + 0.5 * compactness(g) - over };
+      });
+      pool.sort((a, b) => b.score - a.score);
       const t = pool[0];
-      ps[t.j] = { g: union([t.q.g, p.g]), n: t.q.n + p.n, straight: t.q.straight || p.straight };
+      ps[t.j] = { g: t.g, n: t.q.n + p.n, straight: t.q.straight || p.straight };
       ps.splice(i, 1);
       merged = true;
       break;
@@ -164,6 +178,51 @@ export interface SplitResult {
   geometry: Area;
   buildings: number;
   straightCut?: boolean;
+}
+
+/** Lengthen both ends of a road by `ext` degrees in the direction it is heading. */
+function extend(coords: G[], ext: number): G {
+  const out = coords.map((c: G) => new Coordinate(c.x, c.y));
+  const push = (a: G, b: G) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const d = Math.hypot(dx, dy) || 1;
+    return new Coordinate(b.x + (dx / d) * ext, b.y + (dy / d) * ext);
+  };
+  if (ext > 0 && out.length > 1) {
+    out.push(push(out[out.length - 2], out[out.length - 1]));
+    out.unshift(push(out[1], out[0]));
+  }
+  return factory.createLineString(out);
+}
+
+/**
+ * Split a piece that no road fully crosses. Tries every road inside it, lengthening dead ends a
+ * little until they reach the edge, and keeps the cut that shares the houses most evenly.
+ * Falls back to a straight line through the middle house only when no road works.
+ */
+function cutAlongRoads(piece: Piece, roads: G[], index: BuildingIndex, min: number): Piece[] {
+  const env = piece.g.getEnvelopeInternal();
+  const inside = roads.filter((r) => env.intersects(r.getEnvelopeInternal()) && piece.g.intersects(r));
+  let best: { faces: Piece[]; score: number } | null = null;
+  for (const ext of [0, 0.0006, 0.0015]) {
+    // ~0, 65 m and 165 m
+    for (const r of inside) {
+      const line = extend(r.getCoordinates(), ext);
+      const faces = polygonize(piece.g, [line]);
+      if (faces.length < 2) continue;
+      const counted = faces.map((g) => ({ g, n: index.count(g) }));
+      const parts = counted.length > 2 ? mergeSmall(counted, min, Infinity) : counted;
+      if (parts.length < 2) continue;
+      const ns = parts.map((f) => f.n);
+      const balance = Math.min(...ns) / Math.max(...ns, 1);
+      const shape = Math.min(...parts.map((f) => compactness(f.g)));
+      const score = balance + 0.3 * shape - ext * 150; // prefer real roads over long extensions
+      if (Math.min(...ns) >= min * 0.6 && (!best || score > best.score)) best = { faces: parts, score };
+    }
+    if (best && best.score > 0.55) break;
+  }
+  return best ? best.faces : halve(piece, index);
 }
 
 /** Cut a piece in two with a straight line through the middle house, across its longer side. */
@@ -200,14 +259,15 @@ export function autoSplit(boundary: Area, osm: OsmData, opt: SplitOptions): Spli
       : [],
   );
   const levels = byLevel.map((ls, i) => ({ ls, i })).filter((l) => l.ls.length);
+  const allRoads = levels.flatMap((l) => l.ls);
 
   let done = 0;
   const split = (piece: Piece, li: number, depth = 0): Piece[] => {
     if (piece.n <= opt.max) return [piece];
     if (li >= levels.length) {
-      // No road cuts through: fall back to straight cuts so no territory is far too large.
-      if (piece.n < opt.max * 1.2 || depth > 6) return [piece];
-      const halves = halve(piece, index);
+      // No road cuts all the way through: use dead-end roads, or a straight cut as a last resort.
+      if (piece.n < opt.max * 1.15 || depth > 6) return [piece];
+      const halves = cutAlongRoads(piece, allRoads, index, opt.min);
       return halves.length < 2 ? halves : halves.flatMap((h) => split(h, li, depth + 1));
     }
     const faces = polygonize(piece.g, levels[li].ls).map((g) => ({ g, n: index.count(g) }));
@@ -223,8 +283,13 @@ export function autoSplit(boundary: Area, osm: OsmData, opt: SplitOptions): Spli
   let result = parts.flatMap((p) => split(p, 0));
   opt.onProgress?.('Joining small leftover pieces…');
   result = mergeSmall(result, opt.min, opt.max);
+  // Joining leftovers can push a territory over the limit again; cut those once more along roads.
+  result = result.flatMap((p) => (p.n > opt.max * 1.15 ? split(p, levels.length) : [p]));
   // Drop empty slivers (road islands, water edges) that touch nothing.
   result = result.filter((p) => p.n > 0 || p.g.getArea() > 1e-6);
+  opt.onProgress?.('Including small ponds in their territories…');
+  const filled = fillPonds(result.map((p) => p.g), clean(toJsts(boundary)));
+  result = result.map((p, i) => ({ ...p, g: filled[i] }));
   return result.map((p) => ({ geometry: toArea(p.g), buildings: p.n, ...(p.straight ? { straightCut: true } : {}) }));
 }
 
@@ -284,4 +349,53 @@ export function suggestLocality(area: Area, places: OsmData['places'], lang: str
   const c = g.getInteriorPoint().getCoordinate();
   const d = (p: OsmData['places'][number]) => (p.at[0] - c.x) ** 2 + (p.at[1] - c.y) ** 2;
   return name(places.reduce((a, b) => (d(b) < d(a) ? b : a)));
+}
+
+/** Ponds up to this size (m²) inside a territory become part of it instead of a hole. */
+export const POND_MAX_M2 = 100_000; // 10 ha
+
+function areaM2(g: G): number {
+  const lat = g.getEnvelopeInternal().centre().y;
+  return g.getArea() * 111_320 * 111_320 * Math.cos((lat * Math.PI) / 180);
+}
+
+/**
+ * Remove small holes (ponds, tanks) from territories. A hole is kept when it is large, when it
+ * holds another territory, or when it is a hole in the congregation boundary itself.
+ */
+function fillPonds(geoms: G[], boundary?: G): G[] {
+  const inner = geoms.map((g) => g.getInteriorPoint().getCoordinate());
+  return geoms.map((g, gi) => {
+    const polys = polygonsOf(g).map((poly) => {
+      const holes = [];
+      for (let i = 0; i < poly.getNumInteriorRing(); i++) {
+        const ring = poly.getInteriorRingN(i);
+        const hole = factory.createPolygon(ring);
+        const loc = new IndexedPointInAreaLocator(hole);
+        const keep =
+          areaM2(hole) > POND_MAX_M2 ||
+          inner.some((c: G, j: number) => j !== gi && loc.locate(c) !== Location.EXTERIOR) ||
+          (!!boundary && boundaryHasHole(boundary, hole));
+        if (keep) holes.push(factory.createLinearRing(ring.getCoordinates()));
+      }
+      return factory.createPolygon(factory.createLinearRing(poly.getExteriorRing().getCoordinates()), holes);
+    });
+    return polys.length === 1 ? polys[0] : factory.createMultiPolygon(polys);
+  });
+}
+
+/** True when `hole` lies in one of the boundary's own holes (e.g. another congregation's enclave). */
+function boundaryHasHole(boundary: G, hole: G): boolean {
+  const p = hole.getInteriorPoint().getCoordinate();
+  for (const poly of polygonsOf(boundary))
+    for (let i = 0; i < poly.getNumInteriorRing(); i++) {
+      const h = factory.createPolygon(poly.getInteriorRingN(i));
+      if (new IndexedPointInAreaLocator(h).locate(p) !== Location.EXTERIOR) return true;
+    }
+  return false;
+}
+
+/** Fill pond holes in existing territories (used from the Review step). */
+export function fillPondsInAreas(areas: Area[]): Area[] {
+  return fillPonds(areas.map((a) => clean(toJsts(a)))).map(toArea);
 }
