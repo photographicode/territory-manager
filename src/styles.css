@@ -180,3 +180,9 @@ textarea { resize: vertical; }
   .detail { border-left: 0; border-top: 1px solid var(--line); }
   .step-hint { display: none; }
 }
+@media (max-width: 600px) {
+  .top { gap: 0; padding: 0 8px; }
+  .brand { padding: 8px 4px 0; width: 100%; }
+  .tabs button { padding: 10px 8px; font-size: 13px; }
+  .stepper button { padding: 4px 8px; }
+}
