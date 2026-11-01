@@ -1,0 +1,12 @@
+:root { --ink: #1d1f21; --muted: #5f6368; --bg: #fff; --line: #dadce0; --accent: #a5281b; }
+@media (prefers-color-scheme: dark) { :root { --ink: #e8eaed; --muted: #9aa0a6; --bg: #202124; --line: #3c4043; } }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; font-family: "Noto Sans", "Noto Sans Malayalam", system-ui, sans-serif; color: var(--ink); background: var(--bg); }
+body { display: flex; flex-direction: column; }
+.vh { padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.vh-num { font-weight: 700; font-size: 18px; color: var(--accent); }
+.vh-name { font-size: 16px; }
+#map { flex: 1; }
+.vbar { display: grid; grid-template-columns: 1.2fr 1fr 1fr 0.7fr 0.7fr; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
+.vbar a, .vbar button { font: inherit; font-size: 14px; font-weight: 600; text-align: center; text-decoration: none; padding: 10px 4px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+.vbar #locate { background: #1a73e8; border-color: #1a73e8; color: #fff; }

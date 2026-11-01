@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <title>Territory Map</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&family=Noto+Sans+Malayalam:wght@400;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <header class="vh">
+      <div><div class="vh-num" id="num"></div><div class="vh-name" id="name"></div></div>
+    </header>
+    <div id="map"></div>
+    <nav class="vbar">
+      <button id="locate">My location</button>
+      <a id="gmaps" target="_blank" rel="noopener">Directions</a>
+      <a id="amaps" target="_blank" rel="noopener">Apple Maps</a>
+      <button id="kml" title="Opens in Google Earth and most map apps">KML</button>
+      <button id="gpx" title="For OsmAnd, Organic Maps and GPS apps">GPX</button>
+    </nav>
+    <script type="module" src="/src/viewer.ts"></script>
+  </body>
+</html>
