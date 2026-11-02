@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { get, set } from 'idb-keyval';
+import { del, get, set } from 'idb-keyval';
 import { defaultSettings, newProject, type OsmData, type Project } from './types';
+import type { SplitCheckpoint } from './geo/runSplit';
 
 const KEY = 'territory-manager:project';
 const OSM_KEY = 'territory-manager:osm';
 const UNDO_LIMIT = 40;
 
+const CHECKPOINT_KEY = 'territory-manager:split-checkpoint';
+
 export const loadOsm = () => get<OsmData>(OSM_KEY);
 export const saveOsm = (data: OsmData) => set(OSM_KEY, data);
+
+/** Progress of an unfinished split, saved after every stage. */
+export const loadCheckpoint = () => get<SplitCheckpoint>(CHECKPOINT_KEY);
+export const saveCheckpoint = (cp: SplitCheckpoint) => set(CHECKPOINT_KEY, cp);
+export const clearCheckpoint = () => del(CHECKPOINT_KEY);
 
 /** Project state persisted to IndexedDB, with an undo stack for geometry edits. */
 export function useProject() {

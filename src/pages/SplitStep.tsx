@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { PageProps } from '../App';
 import { fetchOsm } from '../geo/osm';
-import { sweepOrder, type SplitResult } from '../geo/core';
-import { loadOsm, saveOsm } from '../store';
+import { sweepOrder } from '../geo/core';
+import { runSplit, splitKey } from '../geo/runSplit';
+import { clearCheckpoint, loadCheckpoint, loadOsm, saveCheckpoint, saveOsm } from '../store';
 import { bboxOf } from '../map';
 import { uid, type OsmData, type Settings } from '../types';
 import { useTask } from '../task';
@@ -59,34 +60,29 @@ export default function SplitStep({ project, update, go }: PageProps) {
 
   async function split() {
     if (!osm) return;
-    if (project.territories.length && !confirm(`Replace the ${project.territories.length} current territories with a new split?`)) return;
+    const opt = { min: s.minBuildings, max: s.maxBuildings, levels: s.levels };
+    const saved = await loadCheckpoint();
+    let resume = saved && saved.key === splitKey(boundary, osm, opt) ? saved : undefined;
+    if (resume) {
+      const when = new Date(resume.savedAt).toLocaleString();
+      resume = confirm(
+        `A split of this boundary stopped before it finished (saved ${when}, after stage ${resume.next} of ${resume.stages.length}: ` +
+          `${resume.stages[resume.next - 1]}).
+
+OK: carry on from stage ${resume.next + 1}
+Cancel: start again from the beginning`,
+      )
+        ? resume
+        : undefined;
+    }
+    if (!resume && project.territories.length && !confirm(`Replace the ${project.territories.length} current territories with a new split?`)) return;
     const result = await task.run(
       'Splitting into territories',
-      (report, signal) =>
-        new Promise<SplitResult[]>((resolve, reject) => {
-          const worker = new Worker(new URL('../geo/split.worker.ts', import.meta.url), { type: 'module' });
-          const stop = (err?: Error, value?: SplitResult[]) => {
-            worker.terminate();
-            if (err) reject(err);
-            else resolve(value!);
-          };
-          signal.addEventListener('abort', () => stop(new DOMException('Cancelled', 'AbortError')));
-          worker.onmessage = (e) => {
-            if (e.data.type === 'progress') report(e.data.msg, e.data.fraction);
-            else if (e.data.type === 'error') stop(new Error(e.data.msg));
-            else stop(undefined, e.data.result);
-          };
-          worker.onerror = (e) => {
-            e.preventDefault();
-            stop(new Error(e.message || 'The splitter stopped unexpectedly. The area may be too big for this device; try a computer, or fewer border types.'));
-          };
-          worker.onmessageerror = () => stop(new Error('The split result could not be read back.'));
-          report('Sending the map data to the splitter…', 0);
-          worker.postMessage({ boundary, osm, opt: { min: s.minBuildings, max: s.maxBuildings, levels: s.levels } });
-        }),
+      (report, signal) => runSplit({ boundary, osm, opt, resume, report, signal, save: saveCheckpoint }),
       { cancellable: true },
     );
     if (!result) return;
+    await clearCheckpoint();
     const ordered = sweepOrder(result);
     update(
       (p) => ({

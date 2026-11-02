@@ -203,3 +203,5 @@ textarea { resize: vertical; }
 .task-error > div { flex: 1; min-width: 0; }
 .task-error b { color: var(--danger); }
 .task-msg { margin: 4px 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 13px; }
+.task-stage { margin-top: 6px; font-weight: 600; }
+.task-warn { margin-top: 6px; color: var(--warn); }
