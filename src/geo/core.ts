@@ -407,6 +407,8 @@ export interface SplitOptions {
   levels: boolean[];
   /** Make exactly this many territories (as near as the map allows). Never more than MAX_TERRITORIES. */
   count?: number;
+  /** What to share out evenly between the territories: ground area, houses (default), or both equally. */
+  evenBy?: 'area' | 'houses' | 'both';
   /** What is happening, and how far along the whole split is (0–1). */
   onProgress?: (msg: string, fraction: number) => void;
 }
@@ -576,26 +578,54 @@ function growOrder(sorted: number[], pos: (i: number) => number, nbs: Map<number
 /**
  * Share the houses out evenly. Every territory is broken into its street blocks; the blocks are then
  * divided again from the top: split the whole area in two where a whole number of territories' worth
- * of houses lies on each side, along the cheapest border (railways, rivers and main roads are cheap),
+ * (of ground, or of houses with `byArea` off) lies on each side, along the cheapest border (railways,
+ * rivers and main roads are cheap),
  * then split each side, until there are `ps.length` territories. Finally, border blocks are handed
  * from bigger to smaller neighbours to smooth the rest. Borders follow streets, water and railways
  * because the blocks are bounded by them.
  */
-function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noBeat, major: G[] = [], secondary: G[] = []): Piece[] {
+function evenOut(
+  ps: Piece[],
+  roads: G[],
+  index: BuildingIndex,
+  beat: Beat = noBeat,
+  major: G[] = [],
+  secondary: G[] = [],
+  evenBy: 'area' | 'houses' | 'both' = 'houses',
+): Piece[] {
+  const byArea = evenBy !== 'houses';
   const k = ps.length;
   if (k < 2) return ps;
-  const blocks: { g: G; n: number; owner: number; x: number; y: number; straight: boolean }[] = [];
+  // `w` is what gets shared out evenly: the block's ground area, its houses, or (both) an equal mix of
+  // its share of all the ground and its share of all the houses.
+  const blocks: { g: G; n: number; w: number; owner: number; x: number; y: number; straight: boolean }[] = [];
   const lonScale = Math.cos((ps[0].g.getInteriorPoint().getCoordinate().y * Math.PI) / 180);
+  // By area, a street block bigger than a quarter of a territory (fields with no road through them)
+  // is divided into a grid of smaller cells, so the area can still be shared out evenly.
+  const areaShare = ps.reduce((a, p) => a + p.g.getArea(), 0) / k;
+  const cell = Math.sqrt(areaShare / 12);
+  const totalArea = ps.reduce((a, p) => a + p.g.getArea(), 0) || 1;
+  const totalHouses = ps.reduce((a, p) => a + p.n, 0) || 1;
+  const addBlock = (g: G, t: number, straight: boolean) => {
+    const c = g.getInteriorPoint().getCoordinate();
+    const n = index.count(g);
+    const w = evenBy === 'houses' ? n : evenBy === 'area' ? g.getArea() / totalArea : (g.getArea() / totalArea + n / totalHouses) / 2;
+    blocks.push({ g, n, w, owner: t, x: c.x * lonScale, y: c.y, straight });
+  };
   ps.forEach((p, t) => {
     beat(`Finding the street blocks in territory ${t + 1} of ${k}`, (0.25 * t) / k);
     for (const g of polygonize(p.g, linesInto(p.g, roads))) {
-      const c = g.getInteriorPoint().getCoordinate();
-      blocks.push({ g, n: index.count(g), owner: t, x: c.x * lonScale, y: c.y, straight: !!p.straight });
+      if (!byArea || g.getArea() <= areaShare / 4) {
+        addBlock(g, t, !!p.straight);
+        continue;
+      }
+      for (const c of polygonize(g, gridLines(g.getEnvelopeInternal(), cell))) addBlock(c, t, true);
     }
   });
   if (blocks.length < k * 2) return ps; // too few blocks to rearrange
   // Border length between blocks along railways, rivers and main roads, and along secondary roads.
   const piecesOnly = blocks.map(({ g, n }) => ({ g, n }));
+  const avgW = blocks.reduce((a, b) => a + b.w, 0) / k;
   const majorNbs = major.length ? neighbourLengths(piecesOnly, noBeat, nearLines(major)) : blocks.map(() => new Map<number, number>());
   const secondaryNbs = secondary.length
     ? neighbourLengths(piecesOnly, noBeat, nearLines(secondary))
@@ -616,7 +646,7 @@ function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noB
       beat(`Dividing evenly: ${++made} of ${k} territories`, 0.4 + (0.3 * made) / k);
       return;
     }
-    const total = ids.reduce((a, i) => a + blocks[i].n, 0);
+    const total = ids.reduce((a, i) => a + blocks[i].w, 0);
     const share = total / parts;
     // A cut can leave any whole number of territories' worth of houses on one side (30–70% of them),
     // so it can slide over to run along a railway, river or main road. Among cuts within 5% of a whole
@@ -646,7 +676,7 @@ function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noB
         for (let at = 0; at < order.length - 1; at++) {
           const i = order[at];
           inLeft.add(i);
-          houses += blocks[i].n;
+          houses += blocks[i].w;
           for (const [j, len] of nbs[i]) if (inIds.has(j)) border += (inLeft.has(j) ? -1 : 1) * cutCost(i, j, len);
           const f = houses / share;
           if (f > hi + 0.5) break;
@@ -673,7 +703,7 @@ function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noB
 
   const members = ps.map(() => new Set<number>());
   blocks.forEach((b, i) => members[b.owner].add(i));
-  const size = members.map((m) => [...m].reduce((a, i) => a + blocks[i].n, 0));
+  const size = members.map((m) => [...m].reduce((a, i) => a + blocks[i].w, 0));
 
   // Blocks without houses (strips between carriageways, verges) go to whichever territory they border
   // most along streets, so they don't leave thin tails running along roads; never if that would cut a
@@ -682,7 +712,8 @@ function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noB
     for (let round = 0; round < 5; round++) {
       let moved = 0;
       blocks.forEach((b, i) => {
-        if (b.n) return;
+        // By area, only small empty bits (verges, strips) move; bigger empty ground counts towards the area.
+        if (b.n || (byArea && b.w > avgW * 0.02)) return;
         const by = new Map<number, number>();
         // Border along streets only: a strip beside a main road belongs with its own side of the road.
         for (const [j, len] of nbs[i]) by.set(blocks[j].owner, (by.get(blocks[j].owner) ?? 0) + len - (majorNbs[i].get(j) ?? 0));
@@ -716,7 +747,7 @@ function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noB
         comps.push(comp);
       }
       if (comps.length < 2) continue;
-      const houses = (c: number[]) => c.reduce((a, i) => a + blocks[i].n, 0);
+      const houses = (c: number[]) => c.reduce((a, i) => a + blocks[i].w, 0);
       comps.sort((a, b) => houses(b) - houses(a) || b.length - a.length);
       for (const comp of comps.slice(1)) {
         // Prefer a neighbour joined along ordinary streets, not across a railway, river or main road.
@@ -745,8 +776,8 @@ function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noB
           members[t].delete(i);
           members[to].add(i);
           blocks[i].owner = to;
-          size[t] -= blocks[i].n;
-          size[to] += blocks[i].n;
+          size[t] -= blocks[i].w;
+          size[to] += blocks[i].w;
         }
       }
     }
@@ -766,6 +797,16 @@ function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noB
     const straight = ids.some((i) => blocks[i].straight && [...nbs[i].keys()].some((j) => blocks[j].owner !== t));
     return { g, n: index.count(g), ...(straight ? { straight: true } : {}) };
   });
+}
+
+/** Straight lines `step` degrees apart across an envelope, both ways, for dividing large fields. */
+function gridLines(e: G, step: number): G[] {
+  const out: G[] = [];
+  for (let x = e.getMinX() + step; x < e.getMaxX(); x += step)
+    out.push(factory.createLineString([new Coordinate(x, e.getMinY() - step), new Coordinate(x, e.getMaxY() + step)]));
+  for (let y = e.getMinY() + step; y < e.getMaxY(); y += step)
+    out.push(factory.createLineString([new Coordinate(e.getMinX() - step, y), new Coordinate(e.getMaxX() + step, y)]));
+  return out;
 }
 
 /** True when territory t stays in one piece without block b (its neighbours in t still reach each other). */
@@ -791,7 +832,7 @@ function staysWhole(blocks: { owner: number }[], nbs: Map<number, number>[], t: 
  * ordinary streets, and blocks cut off from their territory by a main road are moved to their side.
  */
 function smooth(
-  blocks: { g: G; n: number; owner: number }[],
+  blocks: { g: G; w: number; owner: number }[],
   nbs: Map<number, number>[],
   members: Set<number>[],
   size: number[],
@@ -820,7 +861,7 @@ function smooth(
     for (const i of order) {
       const b = blocks[i];
       const from = b.owner;
-      if (!b.n || members[from].size <= 1) continue;
+      if (!b.w || members[from].size <= 1) continue;
       const shared = new Map<number, number>();
       const sharedMajor = new Map<number, number>();
       let own = 0;
@@ -839,11 +880,11 @@ function smooth(
       let best = 0;
       let next = { la: 0, lt: 0 };
       for (const [t, len] of shared) {
-        const gain = size[from] - size[t] - b.n; // > 0: the two end up closer in size
+        const gain = size[from] - size[t] - b.w; // > 0: the two end up closer in size
         // Only join across ordinary streets, never across a railway, river or main road.
         if ((len - (sharedMajor.get(t) ?? 0)) / perim[i] < 0.25) continue;
         // Moves that don't even out sizes are only for tidier shapes, and only while both stay near average.
-        const inBand = size[from] - b.n >= avg * 0.92 && size[t] + b.n <= avg * 1.08;
+        const inBand = size[from] - b.w >= avg * 0.92 && size[t] + b.w <= avg * 1.08;
         if (gain <= 0 && !inBand) continue;
         // How the two outlines change if the block moves, and what that does to their shapes.
         const la = outline[from] + perim[i] - 2 * own;
@@ -858,8 +899,8 @@ function smooth(
       if (to < 0 || !staysWhole(blocks, nbs, from, i)) continue;
       members[from].delete(i);
       members[to].add(i);
-      size[from] -= b.n;
-      size[to] += b.n;
+      size[from] -= b.w;
+      size[to] += b.w;
       area[from] -= barea[i];
       area[to] += barea[i];
       outline[from] = next.la;
@@ -1027,7 +1068,8 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
     {
       name: 'Evening out territory sizes',
       weight: 2,
-      run: (ps, beat) => evenOut(ps, allRoads, index, beat, opt.levels[0] ? byLevel[0] : [], opt.levels[1] ? byLevel[1] : []),
+      run: (ps, beat) =>
+        evenOut(ps, allRoads, index, beat, opt.levels[0] ? byLevel[0] : [], opt.levels[1] ? byLevel[1] : [], opt.evenBy ?? 'houses'),
     },
     {
       name: 'Including small ponds',
@@ -1162,6 +1204,12 @@ function areaM2(g: G): number {
   const lat = g.getEnvelopeInternal().centre().y;
   return g.getArea() * 111_320 * 111_320 * Math.cos((lat * Math.PI) / 180);
 }
+
+/** Ground area of an outline in square kilometres. */
+export const areaKm2 = (area: Area) => areaM2(clean(toJsts(area))) / 1e6;
+
+/** Area for display: hectares below 1 km², else km². */
+export const formatArea = (km2: number) => (km2 < 1 ? `${Math.round(km2 * 100)} ha` : `${km2.toFixed(km2 < 10 ? 1 : 0)} km²`);
 
 /**
  * Remove small holes (ponds, tanks) from territories. A hole is kept when it is large, when it

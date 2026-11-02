@@ -274,7 +274,10 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
         <p className="muted tiny">Click a territory on the map or in the list to select it; Shift/Ctrl-click to select several.</p>
         <div className="tlist">
           {shown.map((t) => {
-            const flag = !index || t.buildings === 0 ? '' : t.buildings > settings.maxBuildings ? 'over' : t.buildings < settings.minBuildings ? 'under' : '';
+            // House-count warnings only make sense when the split aimed for equal houses.
+            const bySize = settings.sizeMode === 'houses' || settings.evenBy === 'houses';
+            const flag =
+              !bySize || !index || t.buildings === 0 ? '' : t.buildings > settings.maxBuildings ? 'over' : t.buildings < settings.minBuildings ? 'under' : '';
             return (
               <div
                 key={t.id}

@@ -2,6 +2,7 @@ import { kml } from '@tmcw/togeojson';
 import { unzipSync, strFromU8, strToU8, zipSync } from 'fflate';
 import type { Feature } from 'geojson';
 import type { Area, Territory } from '../types';
+import { shareOutline } from './core';
 
 export interface ImportedShape {
   name: string;
@@ -72,8 +73,11 @@ ${placemarks.join('\n')}
 export const territoryLabel = (t: Pick<Territory, 'number' | 'locality'>) =>
   [t.number && `No. ${t.number}`, t.locality].filter(Boolean).join(' – ') || 'Territory';
 
+/** Short description with the approximate number of houses, for exports. */
+export const houseNote = (t: Pick<Territory, 'buildings'>) => `About ${t.buildings.toLocaleString('en-IN')} houses (buildings mapped on OpenStreetMap)`;
+
 export function territoriesKml(title: string, ts: Territory[]) {
-  return kmlDocument(title, ts.map((t) => placemark(territoryLabel(t), t.geometry, `${t.buildings} buildings (OpenStreetMap)`)));
+  return kmlDocument(title, ts.map((t) => placemark(territoryLabel(t), t.geometry, houseNote(t))));
 }
 
 export function download(name: string, data: BlobPart, type: string) {
@@ -88,7 +92,7 @@ export function download(name: string, data: BlobPart, type: string) {
 /** One territory as its own KML, ready for a new Google My Maps map. */
 export function territoryKml(t: Territory, congregation = '') {
   const name = [congregation, territoryLabel(t)].filter(Boolean).join(' · ');
-  return kmlDocument(name, [placemark(territoryLabel(t), t.geometry)]);
+  return kmlDocument(name, [placemark(territoryLabel(t), t.geometry, houseNote(t))]);
 }
 
 export const fileName = (t: Pick<Territory, 'number' | 'locality'>) =>
@@ -100,6 +104,36 @@ const exportBase = (congregation: string) => `Territories${congregation ? ` - ${
 export function downloadAllKml(ts: Territory[], congregation: string) {
   const base = exportBase(congregation);
   download(`${base}.kml`, territoriesKml(base, ts), 'application/vnd.google-earth.kml+xml');
+}
+
+/** Outline as WKT, the shape format Google My Maps reads from a CSV column. */
+export function toWkt(g: Area): string {
+  const ring = (r: number[][]) => `(${r.map(([x, y]) => `${+x.toFixed(6)} ${+y.toFixed(6)}`).join(', ')})`;
+  const poly = (rings: number[][][]) => `(${rings.map(ring).join(', ')})`;
+  return g.type === 'Polygon' ? `POLYGON ${poly(g.coordinates)}` : `MULTIPOLYGON (${g.coordinates.map(poly).join(', ')})`;
+}
+
+/** Longest outline written to one CSV cell; My Maps and spreadsheets reject very long cells. */
+const MAX_WKT = 40000;
+
+/**
+ * All territories as a CSV for Google My Maps (Import → choose the WKT column for the shapes and
+ * Name for the titles). Other columns become each territory's details.
+ */
+export function territoriesCsv(ts: Territory[]): string {
+  const cell = (v: string | number) => (/[",\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  const rows = [['Name', 'Number', 'Locality', 'Approx houses', 'Description', 'Notes', 'WKT']];
+  for (const t of ts) {
+    // Use the full outline if it fits in a cell, else simplify just enough.
+    let wkt = toWkt(t.geometry);
+    for (let tol = 0.000005; wkt.length > MAX_WKT && tol < 0.01; tol *= 1.5) wkt = toWkt(shareOutline(t.geometry, tol));
+    rows.push([territoryLabel(t), t.number, t.locality, String(t.buildings), houseNote(t), t.notes ?? '', wkt]);
+  }
+  return rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n';
+}
+
+export function downloadCsv(ts: Territory[], congregation: string) {
+  download(`${exportBase(congregation)} (for Google My Maps).csv`, territoriesCsv(ts), 'text/csv;charset=utf-8');
 }
 
 /** A ZIP with one KML per territory. */

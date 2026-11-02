@@ -66,6 +66,26 @@ describe('automatic split', () => {
     expect(result.reduce((a, r) => a + r.buildings, 0)).toBe(buildings.length);
     for (const r of result) expect(Math.abs(r.buildings - 300)).toBeLessThanOrEqual(300 * 0.1);
   });
+
+  it('can make territories equal in area even when the houses are bunched up', async () => {
+    const { autoSplit, areaKm2 } = await import('../src/geo/core');
+    const lines: OsmData['lines'] = [];
+    for (let i = 0; i <= 12; i++) {
+      const v = 9.88 + i * (0.01 / 12);
+      const h = 76.3 + i * (0.01 / 12);
+      lines.push({ level: 2, coords: [[76.3, v], [76.31, v]] }, { level: 2, coords: [[h, 9.88], [h, 9.89]] });
+    }
+    // All 900 houses in the south-west quarter.
+    const buildings: [number, number][] = [];
+    for (let x = 0; x < 30; x++) for (let y = 0; y < 30; y++) buildings.push([76.3 + (x + 0.5) * (0.005 / 30), 9.88 + (y + 0.5) * (0.005 / 30)]);
+    const osm: OsmData = { bbox: [76.3, 9.88, 76.31, 9.89], fetchedAt: '', lines, water: [], buildings, places: [] };
+    const result = autoSplit(square, osm, { min: 52, max: 98, levels: [true, true, true, true], count: 12, evenBy: 'area' });
+    expect(result).toHaveLength(12);
+    expect(result.reduce((a, r) => a + r.buildings, 0)).toBe(buildings.length);
+    const areas = result.map((r) => areaKm2(r.geometry));
+    const avg = areas.reduce((a, b) => a + b, 0) / areas.length;
+    for (const a of areas) expect(Math.abs(a - avg)).toBeLessThanOrEqual(avg * 0.15);
+  });
 });
 
 describe('ponds', () => {

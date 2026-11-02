@@ -1,13 +1,19 @@
 import { useEffect, useState } from 'react';
 import type { PageProps } from '../App';
 import { fetchOsm } from '../geo/osm';
-import { BuildingIndex, countBuildings, sweepOrder } from '../geo/core';
+import { areaKm2, BuildingIndex, countBuildings, formatArea, sweepOrder } from '../geo/core';
 import { runSplit, splitKey } from '../geo/runSplit';
 import { clearCheckpoint, loadCheckpoint, loadOsm, saveCheckpoint, saveOsm } from '../store';
 import { bboxOf } from '../map';
 import { MAX_TERRITORIES, uid, type OsmData, type Settings } from '../types';
 import { useTask } from '../task';
 import KmlExport from './KmlExport';
+
+const EVEN_BY: [Settings['evenBy'], string, string][] = [
+  ['area', 'Area', 'Every territory covers about the same ground. Built-up areas will have many more houses than open country.'],
+  ['houses', 'Houses', 'Every territory has about the same number of houses. Open country makes for very large territories.'],
+  ['both', 'Both', 'A balance: built-up territories are smaller and open-country ones larger, without either extreme.'],
+];
 
 const LEVELS = [
   ['Major borders', 'Railway, rivers, canals, national/state highways and main roads'],
@@ -52,6 +58,7 @@ export default function SplitStep({ project, update, go }: PageProps) {
     );
   const boundary = project.boundary.geometry;
   const bbox = bboxOf(boundary);
+  const landKm2 = areaKm2(boundary);
   const covers = !!osm && osm.bbox[0] <= bbox[0] && osm.bbox[1] <= bbox[1] && osm.bbox[2] >= bbox[2] && osm.bbox[3] >= bbox[3];
   // Houses per territory follow from the count: aim for the average, allow about 30% either way.
   const count = s.territoryCount || suggested;
@@ -60,7 +67,7 @@ export default function SplitStep({ project, update, go }: PageProps) {
   const sizing = () => {
     if (s.sizeMode === 'houses' || !total) return { min: s.minBuildings, max: s.maxBuildings, levels: s.levels };
     const avg = total / count;
-    return { min: Math.max(1, Math.round(avg * 0.7)), max: Math.max(2, Math.round(avg * 1.3)), levels: s.levels, count };
+    return { min: Math.max(1, Math.round(avg * 0.7)), max: Math.max(2, Math.round(avg * 1.3)), levels: s.levels, count, evenBy: s.evenBy };
   };
 
   async function download() {
@@ -169,7 +176,24 @@ Cancel: start again from the beginning`,
                 onChange={(e) => set({ territoryCount: Math.max(0, Math.round(+e.target.value)) })}
               />
             </label>
-            {total !== null && count > 0 && count <= MAX_TERRITORIES && (
+            <div className="field">
+              <span>Make them equal in</span>
+              <div className="seg" role="radiogroup" aria-label="Make territories equal in">
+                {EVEN_BY.map(([id, label]) => (
+                  <button key={id} role="radio" aria-checked={s.evenBy === id} className={s.evenBy === id ? 'on' : ''} onClick={() => set({ evenBy: id })}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="muted tiny">{EVEN_BY.find(([id]) => id === s.evenBy)?.[2]}</span>
+            </div>
+            {s.evenBy === 'area' && count > 0 && count <= MAX_TERRITORIES && (
+              <p className="muted">
+                {formatArea(landKm2)} ÷ {count} = about <b>{formatArea(landKm2 / count)}</b> per territory
+                {total ? `, with about ${Math.round(total / count).toLocaleString('en-IN')} houses each on average` : ''}.
+              </p>
+            )}
+            {total !== null && count > 0 && count <= MAX_TERRITORIES && s.evenBy !== 'area' && (
               <p className="muted">
                 {total.toLocaleString()} houses ÷ {count} = about <b>{Math.round(total / count).toLocaleString()} houses</b> per territory.
               </p>

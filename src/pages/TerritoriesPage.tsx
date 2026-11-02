@@ -3,6 +3,7 @@ import L from 'leaflet';
 import type { PageProps } from '../App';
 import { cardsPdf } from '../card/render';
 import { download, fileName, territoryKml } from '../geo/kml';
+import { areaKm2, formatArea } from '../geo/core';
 import { useTask } from '../task';
 import { createMap, toLatLngs } from '../map';
 import { STATUS_LABEL, statusOf, uid, type Assignment, type Territory, type TerritoryStatus } from '../types';
@@ -198,7 +199,9 @@ function Detail({ t, project, update, onClose }: PageProps & { t: Territory; onC
             {t.reservation.note && ` · ${t.reservation.note}`}
           </span>
         )}
-        <span className="muted">· about {t.buildings} buildings</span>
+        <span className="muted">
+          · about {t.buildings.toLocaleString('en-IN')} houses · {formatArea(areaKm2(t.geometry))}
+        </span>
       </div>
 
       {!form && (
