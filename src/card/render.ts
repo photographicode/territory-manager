@@ -5,7 +5,7 @@ import { PDFDocument } from 'pdf-lib';
 import maplibregl from 'maplibre-gl';
 import { CARD_ATTRIBUTION, CARD_STYLE_URL } from './tiles';
 import { encodeArea } from '../geo/codec';
-import { simplify } from '../geo/core';
+import { shareOutline } from '../geo/core';
 import type { Area, Settings, Territory } from '../types';
 
 export const CARD = { widthIn: 6, heightIn: 4, dpi: 300 };
@@ -21,11 +21,12 @@ export const viewerUrl = (s: Settings) => s.viewerUrl || new URL('view.html', lo
 /** Link encoded in the QR code: the territory's own map link, or the viewer page with the outline. */
 export function qrLink(t: Territory, s: Settings): string {
   if (t.mapUrl) return t.mapUrl;
+  // Simplify only as much as needed to keep the QR code small enough to scan from a printed card.
   let tol = 0.000005;
-  let code = encodeArea(simplify(t.geometry, tol));
-  while (code.length > MAX_QR_CODE && tol < 0.0002) {
-    tol *= 1.6;
-    code = encodeArea(simplify(t.geometry, tol));
+  let code = encodeArea(shareOutline(t.geometry, tol));
+  while (code.length > MAX_QR_CODE && tol < 0.005) {
+    tol *= 1.4;
+    code = encodeArea(shareOutline(t.geometry, tol));
   }
   const params = new URLSearchParams({ t: t.number, n: t.locality });
   return `${viewerUrl(s).split('#')[0]}#${params.toString()}&g=${code}`;

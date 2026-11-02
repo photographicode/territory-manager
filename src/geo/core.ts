@@ -231,7 +231,7 @@ function segDist2(px: number, py: number, [x1, y1, x2, y2]: number[]) {
  * middle lies on another piece's outline (within ~0.3 m), so pieces cut separately still match.
  * Linear in the number of outline segments, unlike pairwise geometry intersections.
  */
-function neighbourLengths(pieces: Piece[], beat: Beat = noBeat): Map<number, number>[] {
+function neighbourLengths(pieces: Piece[], beat: Beat = noBeat, only?: (x: number, y: number) => boolean): Map<number, number>[] {
   const CELL = 0.0005; // ~55 m
   const TOL2 = 3e-6 ** 2;
   const grid = new Map<string, { s: number[]; owner: number }[]>();
@@ -252,6 +252,7 @@ function neighbourLengths(pieces: Piece[], beat: Beat = noBeat): Map<number, num
     for (const s of list) {
       const mx = (s[0] + s[2]) / 2;
       const my = (s[1] + s[3]) / 2;
+      if (only && !only(mx, my)) continue;
       const hit = new Set<number>();
       for (const c of grid.get(`${Math.floor(mx / CELL)}:${Math.floor(my / CELL)}`) ?? [])
         if (c.owner !== i && !hit.has(c.owner) && segDist2(mx, my, c.s) < TOL2) hit.add(c.owner);
@@ -269,6 +270,27 @@ function neighbourLengths(pieces: Piece[], beat: Beat = noBeat): Map<number, num
     }),
   );
   return out;
+}
+
+/** Test for points lying on (within ~0.5 m of) any of the lines, using a grid of their segments. */
+function nearLines(lines: G[]): (x: number, y: number) => boolean {
+  const CELL = 0.0005;
+  const TOL = 5e-6;
+  const grid = new Map<string, number[][]>();
+  for (const l of lines) {
+    const c = l.getCoordinates();
+    for (let i = 1; i < c.length; i++) {
+      const s = [c[i - 1].x, c[i - 1].y, c[i].x, c[i].y];
+      for (let x = Math.floor((Math.min(s[0], s[2]) - TOL) / CELL); x <= Math.floor((Math.max(s[0], s[2]) + TOL) / CELL); x++)
+        for (let y = Math.floor((Math.min(s[1], s[3]) - TOL) / CELL); y <= Math.floor((Math.max(s[1], s[3]) + TOL) / CELL); y++) {
+          const k = `${x}:${y}`;
+          const cell = grid.get(k);
+          if (cell) cell.push(s);
+          else grid.set(k, [s]);
+        }
+    }
+  }
+  return (x, y) => (grid.get(`${Math.floor(x / CELL)}:${Math.floor(y / CELL)}`) ?? []).some((s) => segDist2(x, y, s) < TOL * TOL);
 }
 
 /** Test for points lying on (within ~0.3 m of) an outline, using a grid of its segments. */
@@ -503,14 +525,63 @@ function removeWater(area: G, water: Area[], beat: Beat): G {
   }
 }
 
+/** Leave out empty specks (under 0.5% of the area, no houses) that joining outlines can leave behind. */
+function dropCrumbs(g: G, index: BuildingIndex): G {
+  const polys = polygonsOf(g);
+  if (polys.length < 2) return g;
+  const whole = g.getArea();
+  const kept = polys.filter((p) => p.getArea() >= whole * 0.005 || index.count(p) > 0);
+  if (kept.length === polys.length || !kept.length) return g;
+  return kept.length === 1 ? kept[0] : factory.createMultiPolygon(kept);
+}
+
+/**
+ * Order blocks for a sweep: start from the lowest position and grow through neighbours, taking the
+ * block with the smallest key next, where a block's key is its position, but at least its neighbour's
+ * key, plus `penalty` when the step crosses a railway, river or main road. Unreached blocks follow.
+ */
+function growOrder(sorted: number[], pos: (i: number) => number, nbs: Map<number, number>[], majorNbs: Map<number, number>[], penalty: number): number[] {
+  if (penalty <= 0) return sorted;
+  const inSet = new Set(sorted);
+  const key = new Map<number, number>();
+  const done = new Set<number>();
+  const heap = new MinHeap<{ k: number; i: number }>((a, b) => a.k < b.k);
+  const out: number[] = [];
+  let next = 0; // next unreached block in position order, to restart from after an island
+  heap.push({ k: pos(sorted[0]), i: sorted[0] });
+  key.set(sorted[0], pos(sorted[0]));
+  while (out.length < sorted.length) {
+    let top = heap.pop();
+    while (top && (done.has(top.i) || key.get(top.i)! < top.k)) top = heap.pop();
+    if (!top) {
+      while (done.has(sorted[next])) next++;
+      const i = sorted[next];
+      top = { k: Math.max(pos(i), key.get(i) ?? -Infinity), i };
+    }
+    done.add(top.i);
+    out.push(top.i);
+    for (const [j, len] of nbs[top.i]) {
+      if (!inSet.has(j) || done.has(j)) continue;
+      const major = (majorNbs[top.i].get(j) ?? 0) >= len * 0.5;
+      const k = Math.max(pos(j), top.k) + (major ? penalty : 0);
+      if (k < (key.get(j) ?? Infinity)) {
+        key.set(j, k);
+        heap.push({ k, i: j });
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * Share the houses out evenly. Every territory is broken into its street blocks; the blocks are then
- * divided again from the top: split the whole area in two along the line that gives each side its
- * share of houses with the shortest border, then split each side, until there are `ps.length`
- * territories. Finally, border blocks are handed from bigger to smaller neighbours to smooth the rest.
- * Borders follow streets, water and railways because the blocks are bounded by them.
+ * divided again from the top: split the whole area in two where a whole number of territories' worth
+ * of houses lies on each side, along the cheapest border (railways, rivers and main roads are cheap),
+ * then split each side, until there are `ps.length` territories. Finally, border blocks are handed
+ * from bigger to smaller neighbours to smooth the rest. Borders follow streets, water and railways
+ * because the blocks are bounded by them.
  */
-function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noBeat): Piece[] {
+function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noBeat, major: G[] = [], secondary: G[] = []): Piece[] {
   const k = ps.length;
   if (k < 2) return ps;
   const blocks: { g: G; n: number; owner: number; x: number; y: number; straight: boolean }[] = [];
@@ -523,10 +594,19 @@ function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noB
     }
   });
   if (blocks.length < k * 2) return ps; // too few blocks to rearrange
-  const nbs = neighbourLengths(
-    blocks.map(({ g, n }) => ({ g, n })),
-    part(beat, 0.25, 0.4),
-  );
+  // Border length between blocks along railways, rivers and main roads, and along secondary roads.
+  const piecesOnly = blocks.map(({ g, n }) => ({ g, n }));
+  const majorNbs = major.length ? neighbourLengths(piecesOnly, noBeat, nearLines(major)) : blocks.map(() => new Map<number, number>());
+  const secondaryNbs = secondary.length
+    ? neighbourLengths(piecesOnly, noBeat, nearLines(secondary))
+    : blocks.map(() => new Map<number, number>());
+  // Cutting along a major border costs a fifth of cutting between two ordinary blocks; secondary roads 60%.
+  const cutCost = (i: number, j: number, len: number) => {
+    const onMajorLen = Math.min(len, majorNbs[i].get(j) ?? 0);
+    const onSecondaryLen = Math.min(len - onMajorLen, secondaryNbs[i].get(j) ?? 0);
+    return len - 0.8 * onMajorLen - 0.4 * onSecondaryLen;
+  };
+  const nbs = neighbourLengths(piecesOnly, part(beat, 0.25, 0.4));
 
   // Divide `ids` into `parts` territories, numbering them from `first`.
   let made = 0;
@@ -536,38 +616,54 @@ function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noB
       beat(`Dividing evenly: ${++made} of ${k} territories`, 0.4 + (0.3 * made) / k);
       return;
     }
-    const left = Math.floor(parts / 2);
     const total = ids.reduce((a, i) => a + blocks[i].n, 0);
-    const want = (total * left) / parts;
-    // Best cut within 5% of one territory's share of the right split (shortest border), else the nearest one.
-    // Keeping the allowance to a fraction of a single territory stops errors adding up at each level.
-    let best: { order: number[]; at: number; cost: number } | undefined;
-    let nearest: { order: number[]; at: number; miss: number } | undefined;
-    for (const axis of ['x', 'y'] as const) {
-      const order = [...ids].sort((a, b) => blocks[a][axis] - blocks[b][axis]);
-      // Walk along the axis, tracking the houses taken and the border length between the two sides.
-      const inLeft = new Set<number>();
-      const inIds = new Set(ids);
-      let houses = 0;
-      let border = 0;
-      for (let at = 0; at < order.length - 1; at++) {
-        const i = order[at];
-        inLeft.add(i);
-        houses += blocks[i].n;
-        for (const [j, len] of nbs[i]) if (inIds.has(j)) border += inLeft.has(j) ? -len : len;
-        const miss = Math.abs(houses - want) / Math.max(1, total / parts);
-        if (!nearest || miss < nearest.miss) nearest = { order, at, miss };
-        if (miss > 0.05) {
-          if (houses > want) break;
-          continue;
+    const share = total / parts;
+    // A cut can leave any whole number of territories' worth of houses on one side (30–70% of them),
+    // so it can slide over to run along a railway, river or main road. Among cuts within 5% of a whole
+    // number, take the cheapest border; if none qualifies, the one nearest the middle.
+    const lo = Math.max(1, Math.round(parts * 0.3));
+    const hi = Math.min(parts - 1, Math.round(parts * 0.7));
+    let best: { order: number[]; at: number; left: number; cost: number } | undefined;
+    let nearest: { order: number[]; at: number; left: number; miss: number } | undefined;
+    // Try cutting north–south, east–west and along both diagonals, each as a straight sweep and as a
+    // sweep that grows through neighbouring blocks and treats crossing a railway, river or main road
+    // as a long way round, so the side fills up to the main road before going past it.
+    for (const [ax, ay] of [
+      [1, 0],
+      [0, 1],
+      [1, 1],
+      [1, -1],
+    ]) {
+      const pos = (i: number) => blocks[i].x * ax + blocks[i].y * ay;
+      const sorted = [...ids].sort((a, b) => pos(a) - pos(b));
+      const extent = pos(sorted[sorted.length - 1]) - pos(sorted[0]);
+      for (const order of [sorted, growOrder(sorted, pos, nbs, majorNbs, extent * 0.6)]) {
+        // Walk along the order, tracking the houses taken and the border cost between the two sides.
+        const inLeft = new Set<number>();
+        const inIds = new Set(ids);
+        let houses = 0;
+        let border = 0;
+        for (let at = 0; at < order.length - 1; at++) {
+          const i = order[at];
+          inLeft.add(i);
+          houses += blocks[i].n;
+          for (const [j, len] of nbs[i]) if (inIds.has(j)) border += (inLeft.has(j) ? -1 : 1) * cutCost(i, j, len);
+          const f = houses / share;
+          if (f > hi + 0.5) break;
+          const left = Math.min(hi, Math.max(lo, Math.round(f)));
+          const miss = Math.abs(f - left);
+          const middle = Math.abs(houses - (total * Math.floor(parts / 2)) / parts) / share;
+          if (!nearest || middle < nearest.miss) nearest = { order, at, left: Math.floor(parts / 2), miss: middle };
+          if (miss > 0.05) continue;
+          // Slightly prefer even halves, which keep the pieces compact.
+          const cost = border * (1 + 4 * miss) * (1 + 0.5 * Math.abs(left / parts - 0.5));
+          if (!best || cost < best.cost) best = { order, at, left, cost };
         }
-        const cost = border * (1 + 4 * miss);
-        if (!best || cost < best.cost) best = { order, at, cost };
       }
     }
     const cut = best ?? nearest!;
-    divide(cut.order.slice(0, cut.at + 1), left, first);
-    divide(cut.order.slice(cut.at + 1), parts - left, first + left);
+    divide(cut.order.slice(0, cut.at + 1), cut.left, first);
+    divide(cut.order.slice(cut.at + 1), parts - cut.left, first + cut.left);
   };
   divide(
     blocks.map((_, i) => i),
@@ -579,75 +675,120 @@ function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noB
   blocks.forEach((b, i) => members[b.owner].add(i));
   const size = members.map((m) => [...m].reduce((a, i) => a + blocks[i].n, 0));
 
-  // A side can come out in more than one piece (across a lake, say); give the smaller pieces to a neighbour.
-  for (let t = 0; t < k; t++) {
-    const left = new Set(members[t]);
-    const comps: number[][] = [];
-    while (left.size) {
-      const start = left.values().next().value as number;
-      const comp = [start];
-      left.delete(start);
-      for (let q = 0; q < comp.length; q++)
-        for (const j of nbs[comp[q]].keys())
-          if (left.has(j)) {
-            left.delete(j);
-            comp.push(j);
-          }
-      comps.push(comp);
-    }
-    if (comps.length < 2) continue;
-    const houses = (c: number[]) => c.reduce((a, i) => a + blocks[i].n, 0);
-    comps.sort((a, b) => houses(b) - houses(a) || b.length - a.length);
-    for (const comp of comps.slice(1)) {
-      const touching = new Set<number>();
-      for (const i of comp) for (const j of nbs[i].keys()) if (blocks[j].owner !== t) touching.add(blocks[j].owner);
-      if (!touching.size) continue; // an island; it stays where it is
-      const to = [...touching].reduce((a, b) => (size[b] < size[a] ? b : a));
-      for (const i of comp) {
-        members[t].delete(i);
+  // Blocks without houses (strips between carriageways, verges) go to whichever territory they border
+  // most along streets, so they don't leave thin tails running along roads; never if that would cut a
+  // territory in two.
+  const settleEmpty = () => {
+    for (let round = 0; round < 5; round++) {
+      let moved = 0;
+      blocks.forEach((b, i) => {
+        if (b.n) return;
+        const by = new Map<number, number>();
+        // Border along streets only: a strip beside a main road belongs with its own side of the road.
+        for (const [j, len] of nbs[i]) by.set(blocks[j].owner, (by.get(blocks[j].owner) ?? 0) + len - (majorNbs[i].get(j) ?? 0));
+        let to = b.owner;
+        for (const [t, len] of by) if (len > (by.get(to) ?? 0)) to = t;
+        if (to === b.owner || members[b.owner].size <= 1 || !staysWhole(blocks, nbs, b.owner, i)) return;
+        members[b.owner].delete(i);
         members[to].add(i);
-        blocks[i].owner = to;
-        size[t] -= blocks[i].n;
-        size[to] += blocks[i].n;
+        b.owner = to;
+        moved++;
+      });
+      if (!moved) break;
+    }
+  };
+
+  // A side can come out in more than one piece (across a lake, say); give the smaller pieces to a neighbour.
+  const reconnect = () => {
+    for (let t = 0; t < k; t++) {
+      const left = new Set(members[t]);
+      const comps: number[][] = [];
+      while (left.size) {
+        const start = left.values().next().value as number;
+        const comp = [start];
+        left.delete(start);
+        for (let q = 0; q < comp.length; q++)
+          for (const j of nbs[comp[q]].keys())
+            if (left.has(j)) {
+              left.delete(j);
+              comp.push(j);
+            }
+        comps.push(comp);
+      }
+      if (comps.length < 2) continue;
+      const houses = (c: number[]) => c.reduce((a, i) => a + blocks[i].n, 0);
+      comps.sort((a, b) => houses(b) - houses(a) || b.length - a.length);
+      for (const comp of comps.slice(1)) {
+        // Prefer a neighbour joined along ordinary streets, not across a railway, river or main road.
+        const along = new Map<number, number>();
+        for (const i of comp)
+          for (const [j, len] of nbs[i]) {
+            const o = blocks[j].owner;
+            if (o !== t) along.set(o, (along.get(o) ?? 0) + len - (majorNbs[i].get(j) ?? 0));
+          }
+        let to: number;
+        if (along.size) to = [...along.keys()].reduce((a, b) => ((along.get(b) ?? 0) > (along.get(a) ?? 0) ? b : a));
+        else {
+          // Touches no other territory along a border (an island, or joined only at a corner): nearest one.
+          const piece = comp.length === 1 ? blocks[comp[0]].g : union(comp.map((i) => blocks[i].g));
+          const env = piece.getEnvelopeInternal();
+          let dist = Infinity;
+          to = t;
+          blocks.forEach((b) => {
+            if (b.owner === t || env.distance(b.g.getEnvelopeInternal()) >= dist) return;
+            const d = piece.distance(b.g);
+            if (d < dist) [dist, to] = [d, b.owner];
+          });
+          if (to === t) continue;
+        }
+        for (const i of comp) {
+          members[t].delete(i);
+          members[to].add(i);
+          blocks[i].owner = to;
+          size[t] -= blocks[i].n;
+          size[to] += blocks[i].n;
+        }
       }
     }
-  }
+  };
 
-  smooth(blocks, nbs, members, size, part(beat, 0.7, 0.85));
-
-  // Blocks without houses (strips between carriageways, verges) go to whichever territory they border
-  // most, so they don't leave thin tails running along roads.
-  for (let round = 0; round < 5; round++) {
-    let moved = 0;
-    blocks.forEach((b, i) => {
-      if (b.n) return;
-      const by = new Map<number, number>();
-      for (const [j, len] of nbs[i]) by.set(blocks[j].owner, (by.get(blocks[j].owner) ?? 0) + len);
-      let to = b.owner;
-      for (const [t, len] of by) if (len > (by.get(to) ?? 0)) to = t;
-      if (to === b.owner || members[b.owner].size <= 1) return;
-      members[b.owner].delete(i);
-      members[to].add(i);
-      b.owner = to;
-      moved++;
-    });
-    if (!moved) break;
-  }
+  settleEmpty();
+  reconnect();
+  smooth(blocks, nbs, members, size, part(beat, 0.7, 0.85), majorNbs);
+  settleEmpty();
 
   return ps.map((p, t) => {
     beat(`Drawing territory ${t + 1} of ${k}`, 0.85 + (0.15 * t) / k);
     const ids = [...members[t]];
     if (!ids.length) return p;
-    const g = clean(ids.length === 1 ? blocks[ids[0]].g : union(ids.map((i) => blocks[i].g)));
+    const g = dropCrumbs(clean(ids.length === 1 ? blocks[ids[0]].g : union(ids.map((i) => blocks[i].g))), index);
     // Still marked for checking if a straight-cut edge from before is now on this territory's border.
     const straight = ids.some((i) => blocks[i].straight && [...nbs[i].keys()].some((j) => blocks[j].owner !== t));
     return { g, n: index.count(g), ...(straight ? { straight: true } : {}) };
   });
 }
 
+/** True when territory t stays in one piece without block b (its neighbours in t still reach each other). */
+function staysWhole(blocks: { owner: number }[], nbs: Map<number, number>[], t: number, b: number): boolean {
+  const ends = [...nbs[b].keys()].filter((j) => blocks[j].owner === t);
+  if (ends.length <= 1) return true;
+  const seen = new Set([b, ends[0]]);
+  const stack = [ends[0]];
+  while (stack.length) {
+    const x = stack.pop()!;
+    for (const y of nbs[x].keys())
+      if (!seen.has(y) && blocks[y].owner === t) {
+        seen.add(y);
+        stack.push(y);
+      }
+  }
+  return ends.every((e) => seen.has(e));
+}
+
 /**
  * Hand border blocks from bigger territories to smaller neighbours while that narrows the gap,
- * the shapes stay compact, and the giving territory stays in one piece.
+ * the shapes stay compact, and the giving territory stays in one piece. Blocks only move across
+ * ordinary streets, and blocks cut off from their territory by a main road are moved to their side.
  */
 function smooth(
   blocks: { g: G; n: number; owner: number }[],
@@ -655,6 +796,7 @@ function smooth(
   members: Set<number>[],
   size: number[],
   beat: Beat,
+  majorNbs: Map<number, number>[] = blocks.map(() => new Map()),
 ) {
   const avg = size.reduce((a, b) => a + b, 0) / size.length || 1;
   const perim = blocks.map((b) => b.g.getLength());
@@ -671,23 +813,6 @@ function smooth(
   });
   const compact = (a: number, l: number) => (l > 0 ? (4 * Math.PI * a) / (l * l) : 0);
 
-  // True when territory t stays in one piece without block b (its neighbours in t still reach each other).
-  const staysWhole = (t: number, b: number) => {
-    const ends = [...nbs[b].keys()].filter((j) => blocks[j].owner === t);
-    if (ends.length <= 1) return true;
-    const seen = new Set([b, ends[0]]);
-    const stack = [ends[0]];
-    while (stack.length) {
-      const x = stack.pop()!;
-      for (const y of nbs[x].keys())
-        if (!seen.has(y) && blocks[y].owner === t) {
-          seen.add(y);
-          stack.push(y);
-        }
-    }
-    return ends.every((e) => seen.has(e));
-  };
-
   const PASSES = 40;
   for (let pass = 0; pass < PASSES; pass++) {
     let moved = 0;
@@ -697,26 +822,40 @@ function smooth(
       const from = b.owner;
       if (!b.n || members[from].size <= 1) continue;
       const shared = new Map<number, number>();
+      const sharedMajor = new Map<number, number>();
       let own = 0;
+      let ownMajor = 0;
       for (const [j, len] of nbs[i]) {
-        if (blocks[j].owner === from) own += len;
-        else shared.set(blocks[j].owner, (shared.get(blocks[j].owner) ?? 0) + len);
+        const o = blocks[j].owner;
+        if (o === from) {
+          own += len;
+          ownMajor += majorNbs[i].get(j) ?? 0;
+        } else {
+          shared.set(o, (shared.get(o) ?? 0) + len);
+          sharedMajor.set(o, (sharedMajor.get(o) ?? 0) + (majorNbs[i].get(j) ?? 0));
+        }
       }
       let to = -1;
       let best = 0;
       let next = { la: 0, lt: 0 };
       for (const [t, len] of shared) {
         const gain = size[from] - size[t] - b.n; // > 0: the two end up closer in size
-        if (gain <= 0 || len / perim[i] < 0.25) continue;
+        // Only join across ordinary streets, never across a railway, river or main road.
+        if ((len - (sharedMajor.get(t) ?? 0)) / perim[i] < 0.25) continue;
+        // Moves that don't even out sizes are only for tidier shapes, and only while both stay near average.
+        const inBand = size[from] - b.n >= avg * 0.92 && size[t] + b.n <= avg * 1.08;
+        if (gain <= 0 && !inBand) continue;
         // How the two outlines change if the block moves, and what that does to their shapes.
         const la = outline[from] + perim[i] - 2 * own;
         const lt = outline[t] + perim[i] - 2 * len;
         const shape =
           compact(area[from] - barea[i], la) + compact(area[t] + barea[i], lt) - compact(area[from], outline[from]) - compact(area[t], outline[t]);
-        const score = gain / avg + 1.5 * shape;
+        // Reward moving a block that is across a railway, river or main road from the rest of its territory.
+        const sides = (ownMajor - (sharedMajor.get(t) ?? 0)) / perim[i];
+        const score = gain > 0 ? gain / avg + 1.5 * shape + 0.5 * sides : shape + 0.5 * sides - 0.002;
         if (score > best) [to, best, next] = [t, score, { la, lt }];
       }
-      if (to < 0 || !staysWhole(from, i)) continue;
+      if (to < 0 || !staysWhole(blocks, nbs, from, i)) continue;
       members[from].delete(i);
       members[to].add(i);
       size[from] -= b.n;
@@ -885,7 +1024,11 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
         return out.length > target ? mergeSmall(out, opt.min, even, beat, true, target) : out;
       },
     },
-    { name: 'Evening out territory sizes', weight: 2, run: (ps, beat) => evenOut(ps, allRoads, index, beat) },
+    {
+      name: 'Evening out territory sizes',
+      weight: 2,
+      run: (ps, beat) => evenOut(ps, allRoads, index, beat, opt.levels[0] ? byLevel[0] : [], opt.levels[1] ? byLevel[1] : []),
+    },
     {
       name: 'Including small ponds',
       weight: 1,
@@ -949,8 +1092,28 @@ export function areasTouch(a: Area, b: Area): boolean {
   return clean(toJsts(a)).buffer(1e-5).intersects(clean(toJsts(b)));
 }
 
-export function simplify(area: Area, tolerance: number): Area {
-  return toArea(TopologyPreservingSimplifier.simplify(toJsts(area), tolerance));
+/**
+ * Outline for sharing as a link or QR code: holes and detached bits under 3% of the area are left
+ * out, the outline is simplified by `tolerance` degrees, and points are snapped to the 1 m grid of
+ * the QR code format in a way that keeps the shape valid.
+ */
+export function shareOutline(area: Area, tolerance: number): Area {
+  const g = clean(toJsts(area));
+  const whole = g.getArea();
+  const polys = polygonsOf(g)
+    .filter((p) => p.getArea() >= whole * 0.03)
+    .map((p) => {
+      const holes = [];
+      for (let i = 0; i < p.getNumInteriorRing(); i++) {
+        const r = p.getInteriorRingN(i);
+        if (factory.createPolygon(r).getArea() >= whole * 0.03) holes.push(factory.createLinearRing(r.getCoordinates()));
+      }
+      return factory.createPolygon(factory.createLinearRing(p.getExteriorRing().getCoordinates()), holes);
+    });
+  const kept = polys.length ? (polys.length === 1 ? polys[0] : factory.createMultiPolygon(polys)) : g;
+  const simple = TopologyPreservingSimplifier.simplify(kept, tolerance);
+  const snapped = GeometryPrecisionReducer.reduce(simple, new PrecisionModel(1e5));
+  return snapped.isEmpty() ? toArea(simple) : toArea(snapped);
 }
 
 export function interiorPoint(area: Area): [number, number] {
