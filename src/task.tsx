@@ -154,7 +154,7 @@ function TaskBar({ task }: { task: Running }) {
       {task.detail && <div className="muted tiny task-detail">{task.detail}</div>}
       {quiet > QUIET_MS ? (
         <div className="tiny task-warn">
-          No update for {duration(quiet)}. It may still be working on one very large piece{task.cancel ? '; you can Cancel and try again' : ''}.
+          No update for {duration(quiet)}. It may still be working: large areas and slow connections take longer{task.cancel ? '. You can Cancel and try again' : ''}.
         </div>
       ) : (
         late && <div className="tiny task-warn">Taking longer than first estimated ({duration(total!)}), but still making progress.</div>

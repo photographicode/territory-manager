@@ -145,10 +145,18 @@ function Detail({ t, project, update, onClose }: PageProps & { t: Territory; onC
 
   function submit() {
     if (form === 'return' && current) {
-      setAssignments((all) => all.map((a) => (a.id === current.id ? { ...a, completedOn: date, note: note.trim() || a.note } : a)));
+      // Close every open entry for this territory (there should be one; older data may have more).
+      setAssignments((all) =>
+        all.map((a) => (a.territoryId === t.id && !a.completedOn ? { ...a, completedOn: date, note: note.trim() || a.note } : a)),
+      );
     } else if (form === 'assign') {
       if (!name.trim()) return;
-      setAssignments((all) => [...all, { id: uid(), territoryId: t.id, publisher: name.trim(), assignedOn: date, ...(note.trim() ? { note: note.trim() } : {}) }]);
+      // Ignore a second tap on Save: a territory can only be out with one person at a time.
+      setAssignments((all) =>
+        all.some((a) => a.territoryId === t.id && !a.completedOn)
+          ? all
+          : [...all, { id: uid(), territoryId: t.id, publisher: name.trim(), assignedOn: date, ...(note.trim() ? { note: note.trim() } : {}) }],
+      );
       patch({ reservation: undefined });
     } else if (form === 'reserve') {
       if (!name.trim()) return;
@@ -160,6 +168,7 @@ function Detail({ t, project, update, onClose }: PageProps & { t: Territory; onC
   async function pdf() {
     const bytes = await task.run(`Making card PDF for territory ${t.number}`, (report, signal) =>
       cardsPdf([t], settings, (n) => report(n ? 'Putting the PDF together…' : 'Drawing the card (loading its map)…', n), signal),
+      { cancellable: true },
     );
     if (bytes) download(`${fileName(t)}.pdf`, bytes, 'application/pdf');
   }

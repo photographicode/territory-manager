@@ -55,8 +55,23 @@ function offscreenMap(cssW: number, cssH: number): Promise<maplibregl.Map> {
         center: [76.3, 10],
         zoom: 12,
       });
-      map.once('load', () => resolve(map));
-      map.once('error', (e) => reject(e.error ?? new Error('Map could not load')));
+      // Give up after 30 s, so a map that never loads (offline, or the tab was in the background)
+      // fails with a message instead of leaving the card waiting; the next card tries afresh.
+      const fail = (err: Error) => {
+        clearTimeout(timer);
+        map.remove();
+        el.remove();
+        reject(err);
+      };
+      const timer = setTimeout(
+        () => fail(new Error('The card map did not load. Check the internet connection, and keep this tab in front while cards are made.')),
+        30000,
+      );
+      map.once('load', () => {
+        clearTimeout(timer);
+        resolve(map);
+      });
+      map.once('error', (e) => fail(e.error ?? new Error('The card map could not load')));
     });
     mapPromise.catch(() => (mapPromise = null));
   }
