@@ -6,6 +6,7 @@ import GeoJSONWriter from 'jsts/org/locationtech/jts/io/GeoJSONWriter.js';
 import GeometryFactory from 'jsts/org/locationtech/jts/geom/GeometryFactory.js';
 import PrecisionModel from 'jsts/org/locationtech/jts/geom/PrecisionModel.js';
 import Coordinate from 'jsts/org/locationtech/jts/geom/Coordinate.js';
+import Envelope from 'jsts/org/locationtech/jts/geom/Envelope.js';
 import Location from 'jsts/org/locationtech/jts/geom/Location.js';
 import GeometryNoder from 'jsts/org/locationtech/jts/noding/snapround/GeometryNoder.js';
 import Polygonizer from 'jsts/org/locationtech/jts/operation/polygonize/Polygonizer.js';
@@ -293,7 +294,19 @@ function linesInto(area: G, lines: G[]): G[] {
   if (!near.length) return [];
   const loc = new IndexedPointInAreaLocator(area);
   const onEdge = outlineTest(area);
-  return near.filter((l) => l.getCoordinates().some((c: G) => loc.locate(c) === Location.INTERIOR && !onEdge(c.x, c.y)));
+  const inside = (x: number, y: number) => loc.locate(new Coordinate(x, y)) === Location.INTERIOR && !onEdge(x, y);
+  // Check points along each segment, not just the corners: a straight road can cross with both ends outside.
+  return near.filter((l) => {
+    const c = l.getCoordinates();
+    if (inside(c[0].x, c[0].y)) return true;
+    for (let i = 1; i < c.length; i++) {
+      const a = c[i - 1];
+      const b = c[i];
+      if (!env.intersects(new Envelope(a.x, b.x, a.y, b.y))) continue;
+      for (let s = 1; s <= 8; s++) if (inside(a.x + ((b.x - a.x) * s) / 8, a.y + ((b.y - a.y) * s) / 8)) return true;
+    }
+    return false;
+  });
 }
 
 /**
@@ -448,7 +461,9 @@ function halve(piece: Piece, index: BuildingIndex): Piece[] {
     : [new Coordinate(e.getMinX() - pad, m), new Coordinate(e.getMaxX() + pad, m)];
   const faces = polygonize(piece.g, [factory.createLineString(line)]);
   if (faces.length < 2) return [piece];
-  return faces.map((g) => ({ g, n: index.count(g), straight: true }));
+  const parts = faces.map((g) => ({ g, n: index.count(g), straight: true }));
+  // Keep it to the two halves: fold any extra scrap into the half beside it.
+  return parts.length > 2 ? mergeSmall(parts, Infinity, Infinity, noBeat, true, 2) : parts;
 }
 
 /**
@@ -486,6 +501,265 @@ function removeWater(area: G, water: Area[], beat: Beat): G {
     }
     return a;
   }
+}
+
+/**
+ * Share the houses out evenly. Every territory is broken into its street blocks; the blocks are then
+ * divided again from the top: split the whole area in two along the line that gives each side its
+ * share of houses with the shortest border, then split each side, until there are `ps.length`
+ * territories. Finally, border blocks are handed from bigger to smaller neighbours to smooth the rest.
+ * Borders follow streets, water and railways because the blocks are bounded by them.
+ */
+function evenOut(ps: Piece[], roads: G[], index: BuildingIndex, beat: Beat = noBeat): Piece[] {
+  const k = ps.length;
+  if (k < 2) return ps;
+  const blocks: { g: G; n: number; owner: number; x: number; y: number; straight: boolean }[] = [];
+  const lonScale = Math.cos((ps[0].g.getInteriorPoint().getCoordinate().y * Math.PI) / 180);
+  ps.forEach((p, t) => {
+    beat(`Finding the street blocks in territory ${t + 1} of ${k}`, (0.25 * t) / k);
+    for (const g of polygonize(p.g, linesInto(p.g, roads))) {
+      const c = g.getInteriorPoint().getCoordinate();
+      blocks.push({ g, n: index.count(g), owner: t, x: c.x * lonScale, y: c.y, straight: !!p.straight });
+    }
+  });
+  if (blocks.length < k * 2) return ps; // too few blocks to rearrange
+  const nbs = neighbourLengths(
+    blocks.map(({ g, n }) => ({ g, n })),
+    part(beat, 0.25, 0.4),
+  );
+
+  // Divide `ids` into `parts` territories, numbering them from `first`.
+  let made = 0;
+  const divide = (ids: number[], parts: number, first: number) => {
+    if (parts === 1 || ids.length === 1) {
+      for (const i of ids) blocks[i].owner = first;
+      beat(`Dividing evenly: ${++made} of ${k} territories`, 0.4 + (0.3 * made) / k);
+      return;
+    }
+    const left = Math.floor(parts / 2);
+    const total = ids.reduce((a, i) => a + blocks[i].n, 0);
+    const want = (total * left) / parts;
+    // Best cut within 5% of one territory's share of the right split (shortest border), else the nearest one.
+    // Keeping the allowance to a fraction of a single territory stops errors adding up at each level.
+    let best: { order: number[]; at: number; cost: number } | undefined;
+    let nearest: { order: number[]; at: number; miss: number } | undefined;
+    for (const axis of ['x', 'y'] as const) {
+      const order = [...ids].sort((a, b) => blocks[a][axis] - blocks[b][axis]);
+      // Walk along the axis, tracking the houses taken and the border length between the two sides.
+      const inLeft = new Set<number>();
+      const inIds = new Set(ids);
+      let houses = 0;
+      let border = 0;
+      for (let at = 0; at < order.length - 1; at++) {
+        const i = order[at];
+        inLeft.add(i);
+        houses += blocks[i].n;
+        for (const [j, len] of nbs[i]) if (inIds.has(j)) border += inLeft.has(j) ? -len : len;
+        const miss = Math.abs(houses - want) / Math.max(1, total / parts);
+        if (!nearest || miss < nearest.miss) nearest = { order, at, miss };
+        if (miss > 0.05) {
+          if (houses > want) break;
+          continue;
+        }
+        const cost = border * (1 + 4 * miss);
+        if (!best || cost < best.cost) best = { order, at, cost };
+      }
+    }
+    const cut = best ?? nearest!;
+    divide(cut.order.slice(0, cut.at + 1), left, first);
+    divide(cut.order.slice(cut.at + 1), parts - left, first + left);
+  };
+  divide(
+    blocks.map((_, i) => i),
+    k,
+    0,
+  );
+
+  const members = ps.map(() => new Set<number>());
+  blocks.forEach((b, i) => members[b.owner].add(i));
+  const size = members.map((m) => [...m].reduce((a, i) => a + blocks[i].n, 0));
+
+  // A side can come out in more than one piece (across a lake, say); give the smaller pieces to a neighbour.
+  for (let t = 0; t < k; t++) {
+    const left = new Set(members[t]);
+    const comps: number[][] = [];
+    while (left.size) {
+      const start = left.values().next().value as number;
+      const comp = [start];
+      left.delete(start);
+      for (let q = 0; q < comp.length; q++)
+        for (const j of nbs[comp[q]].keys())
+          if (left.has(j)) {
+            left.delete(j);
+            comp.push(j);
+          }
+      comps.push(comp);
+    }
+    if (comps.length < 2) continue;
+    const houses = (c: number[]) => c.reduce((a, i) => a + blocks[i].n, 0);
+    comps.sort((a, b) => houses(b) - houses(a) || b.length - a.length);
+    for (const comp of comps.slice(1)) {
+      const touching = new Set<number>();
+      for (const i of comp) for (const j of nbs[i].keys()) if (blocks[j].owner !== t) touching.add(blocks[j].owner);
+      if (!touching.size) continue; // an island; it stays where it is
+      const to = [...touching].reduce((a, b) => (size[b] < size[a] ? b : a));
+      for (const i of comp) {
+        members[t].delete(i);
+        members[to].add(i);
+        blocks[i].owner = to;
+        size[t] -= blocks[i].n;
+        size[to] += blocks[i].n;
+      }
+    }
+  }
+
+  smooth(blocks, nbs, members, size, part(beat, 0.7, 0.85));
+
+  // Blocks without houses (strips between carriageways, verges) go to whichever territory they border
+  // most, so they don't leave thin tails running along roads.
+  for (let round = 0; round < 5; round++) {
+    let moved = 0;
+    blocks.forEach((b, i) => {
+      if (b.n) return;
+      const by = new Map<number, number>();
+      for (const [j, len] of nbs[i]) by.set(blocks[j].owner, (by.get(blocks[j].owner) ?? 0) + len);
+      let to = b.owner;
+      for (const [t, len] of by) if (len > (by.get(to) ?? 0)) to = t;
+      if (to === b.owner || members[b.owner].size <= 1) return;
+      members[b.owner].delete(i);
+      members[to].add(i);
+      b.owner = to;
+      moved++;
+    });
+    if (!moved) break;
+  }
+
+  return ps.map((p, t) => {
+    beat(`Drawing territory ${t + 1} of ${k}`, 0.85 + (0.15 * t) / k);
+    const ids = [...members[t]];
+    if (!ids.length) return p;
+    const g = clean(ids.length === 1 ? blocks[ids[0]].g : union(ids.map((i) => blocks[i].g)));
+    // Still marked for checking if a straight-cut edge from before is now on this territory's border.
+    const straight = ids.some((i) => blocks[i].straight && [...nbs[i].keys()].some((j) => blocks[j].owner !== t));
+    return { g, n: index.count(g), ...(straight ? { straight: true } : {}) };
+  });
+}
+
+/**
+ * Hand border blocks from bigger territories to smaller neighbours while that narrows the gap,
+ * the shapes stay compact, and the giving territory stays in one piece.
+ */
+function smooth(
+  blocks: { g: G; n: number; owner: number }[],
+  nbs: Map<number, number>[],
+  members: Set<number>[],
+  size: number[],
+  beat: Beat,
+) {
+  const avg = size.reduce((a, b) => a + b, 0) / size.length || 1;
+  const perim = blocks.map((b) => b.g.getLength());
+  const barea = blocks.map((b) => b.g.getArea());
+  // Area and outline length per territory, kept up to date so shape changes can be scored without geometry.
+  const area = members.map((m) => [...m].reduce((a, i) => a + barea[i], 0));
+  const outline = members.map((m) => {
+    let l = 0;
+    for (const i of m) {
+      l += perim[i];
+      for (const [j, len] of nbs[i]) if (m.has(j)) l -= len;
+    }
+    return l;
+  });
+  const compact = (a: number, l: number) => (l > 0 ? (4 * Math.PI * a) / (l * l) : 0);
+
+  // True when territory t stays in one piece without block b (its neighbours in t still reach each other).
+  const staysWhole = (t: number, b: number) => {
+    const ends = [...nbs[b].keys()].filter((j) => blocks[j].owner === t);
+    if (ends.length <= 1) return true;
+    const seen = new Set([b, ends[0]]);
+    const stack = [ends[0]];
+    while (stack.length) {
+      const x = stack.pop()!;
+      for (const y of nbs[x].keys())
+        if (!seen.has(y) && blocks[y].owner === t) {
+          seen.add(y);
+          stack.push(y);
+        }
+    }
+    return ends.every((e) => seen.has(e));
+  };
+
+  const PASSES = 40;
+  for (let pass = 0; pass < PASSES; pass++) {
+    let moved = 0;
+    const order = blocks.map((_, i) => i).sort((a, b) => size[blocks[b].owner] - size[blocks[a].owner]);
+    for (const i of order) {
+      const b = blocks[i];
+      const from = b.owner;
+      if (!b.n || members[from].size <= 1) continue;
+      const shared = new Map<number, number>();
+      let own = 0;
+      for (const [j, len] of nbs[i]) {
+        if (blocks[j].owner === from) own += len;
+        else shared.set(blocks[j].owner, (shared.get(blocks[j].owner) ?? 0) + len);
+      }
+      let to = -1;
+      let best = 0;
+      let next = { la: 0, lt: 0 };
+      for (const [t, len] of shared) {
+        const gain = size[from] - size[t] - b.n; // > 0: the two end up closer in size
+        if (gain <= 0 || len / perim[i] < 0.25) continue;
+        // How the two outlines change if the block moves, and what that does to their shapes.
+        const la = outline[from] + perim[i] - 2 * own;
+        const lt = outline[t] + perim[i] - 2 * len;
+        const shape =
+          compact(area[from] - barea[i], la) + compact(area[t] + barea[i], lt) - compact(area[from], outline[from]) - compact(area[t], outline[t]);
+        const score = gain / avg + 1.5 * shape;
+        if (score > best) [to, best, next] = [t, score, { la, lt }];
+      }
+      if (to < 0 || !staysWhole(from, i)) continue;
+      members[from].delete(i);
+      members[to].add(i);
+      size[from] -= b.n;
+      size[to] += b.n;
+      area[from] -= barea[i];
+      area[to] += barea[i];
+      outline[from] = next.la;
+      outline[to] = next.lt;
+      b.owner = to;
+      moved++;
+    }
+    beat(`Smoothing sizes: round ${pass + 1}, ${moved} blocks moved`, (pass + 1) / PASSES);
+    if (!moved) break;
+  }
+}
+
+/**
+ * Join tiny pieces that touch no other territory (islands, cut-off corners) to the nearest territory,
+ * since they can't grow by taking blocks from a neighbour. `count` is the number of territories wanted.
+ */
+function absorbStrays(ps: Piece[], count: number, beat: Beat = noBeat): Piece[] {
+  const avg = ps.reduce((a, p) => a + p.n, 0) / Math.max(1, count);
+  const nbs = neighbourLengths(ps);
+  const strays = ps.map((p, i) => i).filter((i) => ps[i].n < avg * 0.3 && !nbs[i].size);
+  if (!strays.length) return ps;
+  const out = [...ps];
+  const gone = new Set<number>();
+  for (const [k, i] of strays.entries()) {
+    beat(`Joining stray piece ${k + 1} of ${strays.length} to its nearest territory`, k / strays.length);
+    let near = -1;
+    let dist = Infinity;
+    for (const [j, q] of out.entries()) {
+      if (j === i || gone.has(j) || strays.includes(j)) continue;
+      const d = out[i].g.getEnvelopeInternal().distance(q.g.getEnvelopeInternal());
+      if (d > dist) continue;
+      const exact = out[i].g.distance(q.g);
+      if (exact < dist) [near, dist] = [j, exact];
+    }
+    if (near < 0) continue;
+    out[near] = { g: union([out[near].g, out[i].g]), n: out[near].n + out[i].n, ...(out[near].straight ? { straight: true } : {}) };
+    gone.add(i);
+  }
+  return out.filter((_, i) => !gone.has(i));
 }
 
 const LEVEL_NAMES = ['main roads, rivers and railways', 'secondary roads', 'local roads and streams', 'lanes and footpaths'];
@@ -586,25 +860,32 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
       weight: 1,
       run: (all, beat) => {
         // Empty slivers (road islands, water edges) are dropped first so they don't count as territories.
-        const ps = all.filter(notSliver);
         const target = Math.min(opt.count || Infinity, MAX_TERRITORIES);
-        if (ps.length > target) return mergeSmall(ps, opt.min, opt.max, beat, true, target);
+        // Fold tiny pieces into a neighbour (or, if they touch none, the nearest territory) first.
+        const kept = all.filter(notSliver);
+        const tiny = (kept.reduce((a, p) => a + p.n, 0) / Math.min(target, kept.length)) * 0.3;
+        const ps = absorbStrays(mergeSmall(kept, tiny, Infinity, part(beat, 0, 0.05)), Math.min(target, kept.length), part(beat, 0.05, 0.1));
+        // Joining down to the count aims each join at the average size, so sizes come out even.
+        const even = Math.round(ps.reduce((a, p) => a + p.n, 0) / Math.min(target, ps.length));
+        if (ps.length > target) return mergeSmall(ps, opt.min, even, beat, true, target);
         if (!opt.count || ps.length >= target) return ps;
         // Too few: cut the biggest territory along roads until there are enough.
         let out = [...ps];
-        const real = () => out.filter(notSliver).length;
-        for (let tries = 0; real() < target && tries < target * 2; tries++) {
-          beat(`${real()} of ${target} territories; cutting the biggest one`, real() / target);
-          const big = out.reduce((a, p) => (p.n > a.n ? p : a));
-          const halves = cutAlongRoads(big, allRoads, index, Math.min(opt.min, big.n / 4));
-          if (halves.filter(notSliver).length < 2) break;
-          out = [...out.filter((p) => p !== big), ...halves];
+        // Cut the biggest until there are enough, fold any scraps the cuts leave into a neighbour, repeat.
+        for (let round = 0; round < 4 && out.length < target; round++) {
+          for (let tries = 0; out.length < target && tries < target * 2; tries++) {
+            beat(`${out.length} of ${target} territories; cutting the biggest one`, 0.1 + (0.8 * out.length) / target);
+            const big = out.reduce((a, p) => (p.n > a.n ? p : a));
+            const halves = cutAlongRoads(big, allRoads, index, Math.min(opt.min, big.n / 4)).filter(notSliver);
+            if (halves.length < 2) break;
+            out = [...out.filter((p) => p !== big), ...halves];
+          }
+          out = mergeSmall(out, tiny, Infinity).filter(notSliver);
         }
-        // Fold empty slivers left by the cuts into their neighbours, then trim any overshoot.
-        out = mergeSmall(out, 1, Infinity, beat).filter(notSliver);
-        return out.length > target ? mergeSmall(out, opt.min, opt.max, beat, true, target) : out;
+        return out.length > target ? mergeSmall(out, opt.min, even, beat, true, target) : out;
       },
     },
+    { name: 'Evening out territory sizes', weight: 2, run: (ps, beat) => evenOut(ps, allRoads, index, beat) },
     {
       name: 'Including small ponds',
       weight: 1,
