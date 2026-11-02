@@ -246,15 +246,18 @@ const toJpeg = (c: HTMLCanvasElement) =>
     c.toBlob((b) => (b ? b.arrayBuffer().then(resolve) : reject(new Error('Could not render card'))), 'image/jpeg', 0.9),
   );
 
-export async function cardsPdf(ts: Territory[], s: Settings, onProgress?: (done: number) => void): Promise<Uint8Array> {
+/** `onProgress` gets how many cards are finished, before each card and once at the end. */
+export async function cardsPdf(ts: Territory[], s: Settings, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Territory cards${s.congregation ? ` – ${s.congregation}` : ''}`);
   pdf.setCreator('Territory Manager');
   for (const [i, t] of ts.entries()) {
+    signal?.throwIfAborted();
+    onProgress?.(i, ts.length);
     const img = await pdf.embedJpg(await toJpeg(await renderCard(t, s)));
     const page = pdf.addPage([CARD.widthIn * 72, CARD.heightIn * 72]);
     page.drawImage(img, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() });
-    onProgress?.(i + 1);
   }
+  onProgress?.(ts.length, ts.length);
   return pdf.save();
 }

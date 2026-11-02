@@ -57,21 +57,77 @@ interface OsmElement {
 }
 
 /** Download roads, railways, water and building positions for a bounding box. */
-export async function fetchOsm(bbox: [number, number, number, number], onStatus: (s: string) => void): Promise<OsmData> {
+export async function fetchOsm(
+  bbox: [number, number, number, number],
+  report: (detail: string, fraction?: number) => void,
+  signal?: AbortSignal,
+): Promise<OsmData> {
   const errors: string[] = [];
-  for (const url of ENDPOINTS) {
+  for (const [i, url] of ENDPOINTS.entries()) {
+    const host = new URL(url).host;
+    // Give up on a server that sends nothing for too long, and try the next one.
+    const ctrl = new AbortController();
+    const onAbort = () => ctrl.abort();
+    signal?.addEventListener('abort', onAbort);
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const keepAlive = () => {
+      clearTimeout(idle);
+      idle = setTimeout(() => ctrl.abort(), SERVER_WAIT_MS);
+    };
     try {
-      onStatus(`Downloading map data from ${new URL(url).host}…`);
-      const res = await fetch(url, { method: 'POST', body: new URLSearchParams({ data: query(bbox) }), headers: { Accept: 'application/json' } });
+      report(`Asking ${host} for the map data (server ${i + 1} of ${ENDPOINTS.length}). It can take a minute or two to prepare it…`);
+      keepAlive();
+      const res = await fetch(url, { method: 'POST', body: new URLSearchParams({ data: query(bbox) }), headers: { Accept: 'application/json' }, signal: ctrl.signal });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const json = await res.json();
-      onStatus('Processing map data…');
+      const text = await readBody(res, (got, total) => {
+        keepAlive();
+        report(`Downloading from ${host}: ${mb(got)}${total ? ` of ${mb(total)}` : ''}`, total ? (got / total) * 0.9 : undefined);
+      });
+      clearTimeout(idle);
+      report('Reading the downloaded data…', 0.92);
+      await pause();
+      const json = JSON.parse(text);
+      if (json.remark && /error|timed out|out of memory/i.test(json.remark)) throw new Error(json.remark);
+      report('Sorting roads, water and buildings…', 0.96);
+      await pause();
       return parse(json, bbox);
     } catch (e) {
-      errors.push(`${new URL(url).host}: ${e instanceof Error ? e.message : String(e)}`);
+      if (signal?.aborted) throw e;
+      errors.push(`${host}: ${ctrl.signal.aborted ? `no answer for ${SERVER_WAIT_MS / 60000} minutes` : e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      clearTimeout(idle);
+      signal?.removeEventListener('abort', onAbort);
     }
   }
   throw new Error(`Could not download OpenStreetMap data (the free servers may be busy, try again in a few minutes). ${errors.join('; ')}`);
+}
+
+const SERVER_WAIT_MS = 180_000;
+const mb = (n: number) => `${(n / 1048576).toFixed(1)} MB`;
+const pause = () => new Promise((r) => setTimeout(r, 20));
+
+/** Read a response body while reporting bytes received (total is 0 when the server does not say). */
+async function readBody(res: Response, onBytes: (got: number, total: number) => void): Promise<string> {
+  const total = Number(res.headers.get('content-length')) || 0;
+  if (!res.body) return res.text();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  let got = 0;
+  let last = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    got += value.length;
+    parts.push(decoder.decode(value, { stream: true }));
+    if (Date.now() - last > 150) {
+      last = Date.now();
+      onBytes(got, total);
+    }
+  }
+  parts.push(decoder.decode());
+  onBytes(got, total);
+  return parts.join('');
 }
 
 function parse(json: { elements: OsmElement[] }, bbox: OsmData['bbox']): OsmData {

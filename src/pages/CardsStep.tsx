@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { cardsPdf, qrLink, renderCard, viewerUrl } from '../card/render';
-import { zipSync, strToU8 } from 'fflate';
-import { download, territoriesKml, territoryKml } from '../geo/kml';
-import type { Settings } from '../types';
+import { zipSync } from 'fflate';
+import { download, fileName } from '../geo/kml';
+import type { Settings, Territory } from '../types';
+import { useTask, type Report } from '../task';
+import KmlExport from './KmlExport';
 
 const byNumber = (a: { number: string }, b: { number: string }) => a.number.localeCompare(b.number, undefined, { numeric: true });
 
@@ -11,7 +13,8 @@ export default function CardsStep({ project, update }: PageProps) {
   const s = project.settings;
   const ts = [...project.territories].sort(byNumber);
   const [current, setCurrent] = useState(ts[0]?.id ?? '');
-  const [busy, setBusy] = useState('');
+  const task = useTask();
+  const busy = task.busy;
   const preview = useRef<HTMLDivElement>(null);
   const t = ts.find((x) => x.id === current) ?? ts[0];
   const set = (patch: Partial<Settings>) => update((p) => ({ ...p, settings: { ...p.settings, ...patch } }));
@@ -34,55 +37,48 @@ export default function CardsStep({ project, update }: PageProps) {
     };
   }, [t, s]);
 
+  const make = (list: Territory[], report: Report, signal: AbortSignal) =>
+    cardsPdf(
+      list,
+      s,
+      (n, total) => report(n < total ? `Drawing card ${n + 1} of ${total} (loading its map)…` : 'Putting the PDF together…', n / total),
+      signal,
+    );
+
   /** Open the PDF in a new tab for printing; the tab is opened first so pop-up blockers allow it. */
-  async function openPdf(list: typeof ts) {
+  async function openPdf(list: Territory[]) {
     const win = window.open('', '_blank');
-    setBusy(`Rendering 0 / ${list.length}…`);
-    try {
-      const bytes = await cardsPdf(list, s, (n) => setBusy(`Rendering ${n} / ${list.length}…`));
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-      if (win) win.location.href = url;
-      else download(`${base}.pdf`, bytes, 'application/pdf');
-    } catch (e) {
-      win?.close();
-      alert(`Could not make the PDF: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBusy('');
-    }
+    const bytes = await task.run(`Making PDF of ${list.length === 1 ? 'the card' : `${list.length} cards`}`, (r, sig) => make(list, r, sig), {
+      cancellable: true,
+    });
+    if (!bytes) return void win?.close();
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+    if (win) win.location.href = url;
+    else download(`${base}.pdf`, bytes, 'application/pdf');
   }
 
-  async function pdf(list: typeof ts, name: string) {
-    setBusy(`Rendering 0 / ${list.length}…`);
-    try {
-      const bytes = await cardsPdf(list, s, (n) => setBusy(`Rendering ${n} / ${list.length}…`));
-      download(name, bytes, 'application/pdf');
-    } catch (e) {
-      alert(`Could not make the PDF: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBusy('');
-    }
+  async function pdf(list: Territory[], name: string) {
+    const bytes = await task.run(`Making PDF of ${list.length === 1 ? 'the card' : `${list.length} cards`}`, (r, sig) => make(list, r, sig), {
+      cancellable: true,
+    });
+    if (bytes) download(name, bytes, 'application/pdf');
   }
-
-  const fileName = (x: (typeof ts)[number]) => `Territory ${x.number}${x.locality ? ` - ${x.locality}` : ''}`.replace(/[\/:*?"<>|]/g, '');
 
   async function separatePdfs() {
-    const files: Record<string, Uint8Array> = {};
-    try {
-      for (const [i, x] of ts.entries()) {
-        setBusy(`Rendering ${i} / ${ts.length}…`);
-        files[`${fileName(x)}.pdf`] = await cardsPdf([x], s);
-      }
-      download(`${base} (separate PDFs).zip`, zipSync(files, { level: 0 }), 'application/zip');
-    } catch (e) {
-      alert(`Could not make the PDFs: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBusy('');
-    }
-  }
-
-  function myMapsZip() {
-    const files = Object.fromEntries(ts.map((x) => [`${fileName(x)}.kml`, strToU8(territoryKml(x, s.congregation))]));
-    download(`${base} (KML for My Maps).zip`, zipSync(files), 'application/zip');
+    const files = await task.run(
+      `Making ${ts.length} separate PDFs`,
+      async (report, signal) => {
+        const out: Record<string, Uint8Array> = {};
+        for (const [i, x] of ts.entries()) {
+          report(`Card ${i + 1} of ${ts.length}: Territory ${x.number}`, i / ts.length);
+          out[`${fileName(x)}.pdf`] = await cardsPdf([x], s, undefined, signal);
+        }
+        report('Packing the ZIP file…', 1);
+        return zipSync(out, { level: 0 });
+      },
+      { cancellable: true },
+    );
+    if (files) download(`${base} (separate PDFs).zip`, files, 'application/zip');
   }
 
   if (!t) return <div className="page">No territories yet.</div>;
@@ -144,15 +140,7 @@ export default function CardsStep({ project, update }: PageProps) {
         <p className="muted tiny">
           One KML per territory: import each into its own My Maps map, share it, and paste the link on the territory's page so its QR opens My Maps.
         </p>
-        <div className="dl-list">
-          <button className="btn" onClick={myMapsZip}>
-            KML for each territory (ZIP)
-          </button>
-          <button className="btn ghost" onClick={() => download(`${base}.kml`, territoriesKml(base, ts), 'application/vnd.google-earth.kml+xml')}>
-            All territories in one KML
-          </button>
-        </div>
-        {busy && <p className="status">{busy}</p>}
+        <KmlExport territories={ts} congregation={s.congregation} />
       </aside>
       <div className="preview-pane">
         <div className="toolbar">

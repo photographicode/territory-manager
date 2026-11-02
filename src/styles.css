@@ -186,3 +186,20 @@ textarea { resize: vertical; }
   .tabs button { padding: 10px 8px; font-size: 13px; }
   .stepper button { padding: 4px 8px; }
 }
+
+/* Progress bar and error panel, docked at the bottom of the screen */
+.task-dock { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(560px, calc(100vw - 32px)); z-index: 2000; display: grid; gap: 8px; }
+.task-bar, .task-error { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; box-shadow: 0 6px 24px rgba(0,0,0,.18); }
+.task-head { display: flex; align-items: center; gap: 10px; }
+.task-head b { flex: 1; min-width: 0; }
+.task-detail { margin-top: 6px; overflow-wrap: anywhere; }
+.small-btn { padding: 2px 10px; font-size: 13px; }
+.progress { height: 8px; margin-top: 8px; border-radius: 99px; background: var(--line); overflow: hidden; position: relative; }
+.progress > div { height: 100%; background: var(--accent); border-radius: 99px; transition: width .3s ease; }
+.progress.indeterminate > div { width: 35%; position: absolute; animation: slide 1.3s ease-in-out infinite; }
+@keyframes slide { from { left: -35%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .progress.indeterminate > div { animation-duration: 4s; } }
+.task-error { display: flex; gap: 8px; align-items: flex-start; border-color: var(--danger); }
+.task-error > div { flex: 1; min-width: 0; }
+.task-error b { color: var(--danger); }
+.task-msg { margin: 4px 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 13px; }

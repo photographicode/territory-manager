@@ -5,13 +5,14 @@ import { readKml, type ImportedShape } from '../geo/kml';
 import { mergeAreas, sweepOrder } from '../geo/core';
 import { createMap, toLatLngs } from '../map';
 import { uid } from '../types';
+import { useTask } from '../task';
 
 export default function BoundaryStep({ project, update, go }: PageProps) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map>();
   const layer = useRef<L.LayerGroup>();
   const [shapes, setShapes] = useState<ImportedShape[] | null>(null);
-  const [error, setError] = useState('');
+  const task = useTask();
 
   useEffect(() => {
     map.current = createMap(el.current!);
@@ -31,12 +32,11 @@ export default function BoundaryStep({ project, update, go }: PageProps) {
 
   async function onFile(f: File | undefined) {
     if (!f) return;
-    setError('');
-    try {
-      setShapes(await readKml(f));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
+    const read = await task.run(`Reading ${f.name}`, (report) => {
+      report(`${(f.size / 1024).toFixed(0)} KB`);
+      return readKml(f);
+    });
+    if (read) setShapes(read);
   }
 
   function useAsBoundary() {
@@ -87,7 +87,6 @@ export default function BoundaryStep({ project, update, go }: PageProps) {
           <input type="file" accept=".kml,.kmz" onChange={(e) => onFile(e.target.files?.[0])} />
           <span className="btn primary">Choose KML / KMZ file</span>
         </label>
-        {error && <p className="error">{error}</p>}
         {shapes && (
           <div className="card-box">
             <p>

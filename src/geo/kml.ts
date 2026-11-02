@@ -1,5 +1,5 @@
 import { kml } from '@tmcw/togeojson';
-import { unzipSync, strFromU8 } from 'fflate';
+import { unzipSync, strFromU8, strToU8, zipSync } from 'fflate';
 import type { Feature } from 'geojson';
 import type { Area, Territory } from '../types';
 
@@ -89,6 +89,30 @@ export function download(name: string, data: BlobPart, type: string) {
 export function territoryKml(t: Territory, congregation = '') {
   const name = [congregation, territoryLabel(t)].filter(Boolean).join(' · ');
   return kmlDocument(name, [placemark(territoryLabel(t), t.geometry)]);
+}
+
+export const fileName = (t: Pick<Territory, 'number' | 'locality'>) =>
+  `Territory ${t.number}${t.locality ? ` - ${t.locality}` : ''}`.replace(/[\/\\:*?"<>|]/g, '');
+
+const exportBase = (congregation: string) => `Territories${congregation ? ` - ${congregation}` : ''}`;
+
+/** Every territory in one KML file. */
+export function downloadAllKml(ts: Territory[], congregation: string) {
+  const base = exportBase(congregation);
+  download(`${base}.kml`, territoriesKml(base, ts), 'application/vnd.google-earth.kml+xml');
+}
+
+/** A ZIP with one KML per territory. */
+export function downloadEachKml(ts: Territory[], congregation: string) {
+  const used = new Set<string>();
+  const files: Record<string, Uint8Array> = {};
+  for (const t of ts) {
+    let name = fileName(t);
+    for (let i = 2; used.has(name); i++) name = `${fileName(t)} (${i})`;
+    used.add(name);
+    files[`${name}.kml`] = strToU8(territoryKml(t, congregation));
+  }
+  download(`${exportBase(congregation)} (one KML each).zip`, zipSync(files), 'application/zip');
 }
 
 /** GPX with the outline as a closed track, for apps such as OsmAnd and Organic Maps. */

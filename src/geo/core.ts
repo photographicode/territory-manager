@@ -166,7 +166,8 @@ export interface SplitOptions {
   min: number;
   max: number;
   levels: boolean[];
-  onProgress?: (msg: string) => void;
+  /** What is happening, and how far along the whole split is (0–1). */
+  onProgress?: (msg: string, fraction: number) => void;
 }
 
 /**
@@ -244,8 +245,15 @@ function halve(piece: Piece, index: BuildingIndex): Piece[] {
 export function autoSplit(boundary: Area, osm: OsmData, opt: SplitOptions): SplitResult[] {
   const index = new BuildingIndex(osm.buildings);
   let area = clean(toJsts(boundary));
-  opt.onProgress?.('Removing lakes and rivers…');
-  for (const w of osm.water) {
+  let lastReport = 0;
+  const report = (msg: string, fraction: number, force = false) => {
+    if (!force && Date.now() - lastReport < 120) return;
+    lastReport = Date.now();
+    opt.onProgress?.(msg, fraction);
+  };
+  report('Removing lakes and rivers…', 0, true);
+  for (const [wi, w] of osm.water.entries()) {
+    report(`Removing lakes and rivers… ${wi + 1} of ${osm.water.length}`, (0.08 * wi) / osm.water.length);
     try {
       const wg = clean(toJsts(w));
       if (area.getEnvelopeInternal().intersects(wg.getEnvelopeInternal()) && area.intersects(wg)) area = area.difference(wg);
@@ -261,12 +269,24 @@ export function autoSplit(boundary: Area, osm: OsmData, opt: SplitOptions): Spli
   const levels = byLevel.map((ls, i) => ({ ls, i })).filter((l) => l.ls.length);
   const allRoads = levels.flatMap((l) => l.ls);
 
+  // Progress while splitting = share of houses already in a finished piece.
   let done = 0;
+  let settled = 0;
+  let total = 1;
+  let phase = { from: 0.1, to: 0.8, msg: 'Splitting along roads, water and railway' };
+  const finish = (piece: Piece) => {
+    settled += piece.n;
+    report(
+      `${phase.msg}… ${done} cuts, ${settled.toLocaleString()} of ${total.toLocaleString()} houses placed`,
+      phase.from + (phase.to - phase.from) * Math.min(1, settled / total),
+    );
+    return [piece];
+  };
   const split = (piece: Piece, li: number, depth = 0): Piece[] => {
-    if (piece.n <= opt.max) return [piece];
+    if (piece.n <= opt.max) return finish(piece);
     if (li >= levels.length) {
       // No road cuts all the way through: use dead-end roads, or a straight cut as a last resort.
-      if (piece.n < opt.max * 1.15 || depth > 6) return [piece];
+      if (piece.n < opt.max * 1.15 || depth > 6) return finish(piece);
       const halves = cutAlongRoads(piece, allRoads, index, opt.min);
       return halves.length < 2 ? halves : halves.flatMap((h) => split(h, li, depth + 1));
     }
@@ -274,22 +294,29 @@ export function autoSplit(boundary: Area, osm: OsmData, opt: SplitOptions): Spli
     if (faces.length === 1) return split(piece, li + 1);
     const merged = mergeSmall(faces, opt.min, opt.max);
     done++;
-    if (done % 5 === 0) opt.onProgress?.(`Splitting… ${done} cuts made`);
     return merged.flatMap((f) => split(f, li + 1));
   };
 
+  report('Counting houses…', 0.08, true);
   const parts = polygonsOf(area).map((g) => ({ g, n: index.count(g) }));
-  opt.onProgress?.('Splitting along roads, water and railway…');
+  total = Math.max(1, parts.reduce((a, p) => a + p.n, 0));
+  report('Splitting along roads, water and railway…', 0.1, true);
   let result = parts.flatMap((p) => split(p, 0));
-  opt.onProgress?.('Joining small leftover pieces…');
+  report(`Joining small leftover pieces (${result.length} pieces)…`, 0.8, true);
   result = mergeSmall(result, opt.min, opt.max);
   // Joining leftovers can push a territory over the limit again; cut those once more along roads.
+  const over = result.filter((p) => p.n > opt.max * 1.15);
+  settled = 0;
+  total = Math.max(1, over.reduce((a, p) => a + p.n, 0));
+  phase = { from: 0.88, to: 0.94, msg: 'Re-cutting territories that grew too big' };
+  report(over.length ? `${phase.msg}…` : 'Checking sizes…', 0.88, true);
   result = result.flatMap((p) => (p.n > opt.max * 1.15 ? split(p, levels.length) : [p]));
   // Drop empty slivers (road islands, water edges) that touch nothing.
   result = result.filter((p) => p.n > 0 || p.g.getArea() > 1e-6);
-  opt.onProgress?.('Including small ponds in their territories…');
+  report('Including small ponds in their territories…', 0.95, true);
   const filled = fillPonds(result.map((p) => p.g), clean(toJsts(boundary)));
   result = result.map((p, i) => ({ ...p, g: filled[i] }));
+  report(`Done: ${result.length} territories`, 1, true);
   return result.map((p) => ({ geometry: toArea(p.g), buildings: p.n, ...(p.straight ? { straightCut: true } : {}) }));
 }
 

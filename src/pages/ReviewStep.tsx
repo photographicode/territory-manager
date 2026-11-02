@@ -7,6 +7,8 @@ import { areasTouch, BuildingIndex, countBuildings, fillPondsInAreas, mergeAreas
 import { loadOsm } from '../store';
 import { colorFor, createMap, toLatLngs } from '../map';
 import { uid, type Area, type OsmData, type Territory } from '../types';
+import { useTask } from '../task';
+import KmlExport from './KmlExport';
 
 type Mode = 'select' | 'cut' | 'edit';
 
@@ -22,6 +24,7 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
   const [filter, setFilter] = useState('');
   const [lang, setLang] = useState('en');
   const { territories, settings } = project;
+  const task = useTask();
   const index = useMemo(() => (osm ? new BuildingIndex(osm.buildings) : null), [osm]);
   const recount = (a: Area) => (index ? countBuildings(index, a) : 0);
 
@@ -247,9 +250,13 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
           <button
             className="btn ghost"
             title="Make small ponds inside a territory part of it instead of a hole"
-            onClick={() => {
-              const filled = fillPondsInAreas(territories.map((t) => t.geometry));
-              update((p) => ({ ...p, territories: p.territories.map((t, i) => ({ ...t, geometry: filled[i] })) }), true);
+            disabled={task.busy}
+            onClick={async () => {
+              const filled = await task.run('Including small ponds', (report) => {
+                report(`Checking ${territories.length} territories for ponds…`);
+                return fillPondsInAreas(territories.map((t) => t.geometry));
+              });
+              if (filled) update((p) => ({ ...p, territories: p.territories.map((t, i) => ({ ...t, geometry: filled[i] })) }), true);
             }}
           >
             Include ponds
@@ -316,6 +323,9 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
         <button className="btn ghost" onClick={() => setSelected([])} hidden={!selected.length}>
           Clear selection
         </button>
+        <h3>Save a copy (KML)</h3>
+        <p className="muted tiny">Check the split in Google Earth, My Maps or any map app, or keep a copy outside this app.</p>
+        <KmlExport territories={territories} congregation={settings.congregation} />
       </aside>
       <div className={`map-wrap mode-${mode}`}>
         <div className="map" ref={el} />

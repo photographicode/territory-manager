@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import type { PageProps } from '../App';
 import { cardsPdf } from '../card/render';
-import { download, territoryKml } from '../geo/kml';
+import { download, fileName, territoryKml } from '../geo/kml';
+import { useTask } from '../task';
 import { createMap, toLatLngs } from '../map';
 import { STATUS_LABEL, statusOf, uid, type Assignment, type Territory, type TerritoryStatus } from '../types';
 
@@ -124,7 +125,7 @@ function Detail({ t, project, update, onClose }: PageProps & { t: Territory; onC
   const [name, setName] = useState('');
   const [date, setDate] = useState(today());
   const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
+  const task = useTask();
 
   useEffect(() => {
     const m = createMap(el.current!);
@@ -157,12 +158,10 @@ function Detail({ t, project, update, onClose }: PageProps & { t: Territory; onC
   }
 
   async function pdf() {
-    setBusy(true);
-    try {
-      download(`Territory ${t.number}${t.locality ? ` - ${t.locality}` : ''}.pdf`, await cardsPdf([t], settings), 'application/pdf');
-    } finally {
-      setBusy(false);
-    }
+    const bytes = await task.run(`Making card PDF for territory ${t.number}`, (report, signal) =>
+      cardsPdf([t], settings, (n) => report(n ? 'Putting the PDF together…' : 'Drawing the card (loading its map)…', n), signal),
+    );
+    if (bytes) download(`${fileName(t)}.pdf`, bytes, 'application/pdf');
   }
 
   return (
@@ -214,8 +213,8 @@ function Detail({ t, project, update, onClose }: PageProps & { t: Territory; onC
               Cancel reservation
             </button>
           )}
-          <button className="btn" disabled={busy} onClick={pdf}>
-            {busy ? 'Making PDF…' : 'Card PDF'}
+          <button className="btn" disabled={task.busy} onClick={pdf}>
+            Card PDF
           </button>
         </div>
       )}

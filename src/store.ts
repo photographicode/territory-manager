@@ -24,7 +24,13 @@ export function useProject() {
 
   useEffect(() => {
     if (!project) return;
-    const t = setTimeout(() => set(KEY, project), 300);
+    const t = setTimeout(
+      () =>
+        set(KEY, project).catch((e) => {
+          throw new Error(`Saving on this device failed, so recent changes may be lost. Download a backup now. (${e instanceof Error ? e.message : e})`);
+        }),
+      300,
+    );
     return () => clearTimeout(t);
   }, [project]);
 

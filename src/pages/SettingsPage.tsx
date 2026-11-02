@@ -2,9 +2,11 @@ import { useState } from 'react';
 import type { PageProps } from '../App';
 import { download } from '../geo/kml';
 import { newProject, type Project } from '../types';
+import { useTask } from '../task';
 
 export default function SettingsPage({ project, replace }: PageProps) {
   const [msg, setMsg] = useState('');
+  const task = useTask();
 
   function backup() {
     const name = `territory-manager-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -13,9 +15,13 @@ export default function SettingsPage({ project, replace }: PageProps) {
 
   async function restore(f: File | undefined) {
     if (!f) return;
+    const data = await task.run('Reading the backup', async () => {
+      const d = JSON.parse(await f.text()) as Project;
+      if (d.version !== 1 || !Array.isArray(d.territories)) throw new Error('This is not a Territory Manager backup');
+      return d;
+    });
+    if (!data) return;
     try {
-      const data = JSON.parse(await f.text()) as Project;
-      if (data.version !== 1 || !Array.isArray(data.territories)) throw new Error('This is not a Territory Manager backup');
       if (!confirm(`Replace everything with this backup (${data.territories.length} territories, ${data.assignments?.length ?? 0} records)?`)) return;
       replace({ ...newProject(), ...data, settings: { ...newProject().settings, ...data.settings } });
       setMsg('Backup restored.');
