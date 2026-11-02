@@ -13,6 +13,7 @@ import UnaryUnionOp from 'jsts/org/locationtech/jts/operation/union/UnaryUnionOp
 import IndexedPointInAreaLocator from 'jsts/org/locationtech/jts/algorithm/locate/IndexedPointInAreaLocator.js';
 import TopologyPreservingSimplifier from 'jsts/org/locationtech/jts/simplify/TopologyPreservingSimplifier.js';
 import ArrayList from 'jsts/java/util/ArrayList.js';
+import GeometryPrecisionReducer from 'jsts/org/locationtech/jts/precision/GeometryPrecisionReducer.js';
 import type { Area, OsmData } from '../types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -52,6 +53,28 @@ const list = (items: G[]) => {
   return l;
 };
 
+/**
+ * Noded lines as single segments, each once. Roads that run along the area's edge or along each
+ * other give the same segment twice, and the polygonizer then drops the faces on either side.
+ */
+function uniqueSegments(lines: G[]): G[] {
+  const seen = new Set<string>();
+  const out: G[] = [];
+  for (const l of lines) {
+    const c = l.getCoordinates();
+    for (let i = 1; i < c.length; i++) {
+      const a = c[i - 1];
+      const b = c[i];
+      if (a.x === b.x && a.y === b.y) continue;
+      const k = a.x < b.x || (a.x === b.x && a.y < b.y) ? `${a.x},${a.y},${b.x},${b.y}` : `${b.x},${b.y},${a.x},${a.y}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(factory.createLineString([new Coordinate(a.x, a.y), new Coordinate(b.x, b.y)]));
+    }
+  }
+  return out;
+}
+
 /** Split an area into faces formed by the given lines. Lines that do not cut through are ignored. */
 export function polygonize(area: G, lines: G[]): G[] {
   const env = area.getEnvelopeInternal();
@@ -61,11 +84,27 @@ export function polygonize(area: G, lines: G[]): G[] {
   const edges = [area.getBoundary(), ...crossing];
   const noded = new GeometryNoder(PM).node(list(edges));
   const pz = new Polygonizer();
-  pz.add(noded);
+  pz.add(list(uniqueSegments(noded.toArray())));
   const faces: G[] = pz.getPolygons().toArray();
   const loc = new IndexedPointInAreaLocator(area);
   const inside = faces.filter((f) => loc.locate(f.getInteriorPoint().getCoordinate()) === Location.INTERIOR);
-  return inside.length ? inside : [area];
+  if (!inside.length) return [area];
+  // The polygonizer can still skip an awkward face; add any part not covered back, so no ground is lost.
+  const whole = area.getArea();
+  if (whole - inside.reduce((a, f) => a + f.getArea(), 0) > whole * 1e-7) {
+    try {
+      inside.push(...polygonsOf(area.difference(union(inside))).filter((g) => g.getArea() > whole * 1e-9));
+    } catch {
+      // Rare geometry error: try with the faces snapped to the grid, else keep the faces found.
+      try {
+        const snapped = union(inside.map((f) => GeometryPrecisionReducer.reduce(f, PM)));
+        inside.push(...polygonsOf(area.difference(snapped)).filter((g) => g.getArea() > whole * 1e-9));
+      } catch {
+        /* keep the faces found */
+      }
+    }
+  }
+  return inside;
 }
 
 /** Grid index over building positions for fast counting. */
@@ -231,13 +270,39 @@ function neighbourLengths(pieces: Piece[], beat: Beat = noBeat): Map<number, num
   return out;
 }
 
+/** Test for points lying on (within ~0.3 m of) an outline, using a grid of its segments. */
+function outlineTest(g: G): (x: number, y: number) => boolean {
+  const CELL = 0.0005;
+  const TOL2 = 3e-6 ** 2;
+  const grid = new Map<string, number[][]>();
+  for (const s of segmentsOf(g))
+    for (let x = Math.floor((Math.min(s[0], s[2]) - 3e-6) / CELL); x <= Math.floor((Math.max(s[0], s[2]) + 3e-6) / CELL); x++)
+      for (let y = Math.floor((Math.min(s[1], s[3]) - 3e-6) / CELL); y <= Math.floor((Math.max(s[1], s[3]) + 3e-6) / CELL); y++) {
+        const k = `${x}:${y}`;
+        const cell = grid.get(k);
+        if (cell) cell.push(s);
+        else grid.set(k, [s]);
+      }
+  return (x, y) => (grid.get(`${Math.floor(x / CELL)}:${Math.floor(y / CELL)}`) ?? []).some((s) => segDist2(x, y, s) < TOL2);
+}
+
+/** Lines that run into the area's interior, not just along its edge. */
+function linesInto(area: G, lines: G[]): G[] {
+  const env = area.getEnvelopeInternal();
+  const near = lines.filter((l) => env.intersects(l.getEnvelopeInternal()));
+  if (!near.length) return [];
+  const loc = new IndexedPointInAreaLocator(area);
+  const onEdge = outlineTest(area);
+  return near.filter((l) => l.getCoordinates().some((c: G) => loc.locate(c) === Location.INTERIOR && !onEdge(c.x, c.y)));
+}
+
 /**
  * Merge pieces with fewer than `min` buildings into a neighbour. Prefers the neighbour that keeps
  * the joined territory compact and shares a long border, so leftovers don't wrap around others.
  * Neighbours and shared border lengths are worked out once; after that, joining only adds numbers
  * (area, perimeter, shared length), and the outlines are joined once at the end.
  */
-function mergeSmall(pieces: Piece[], min: number, max: number, beat: Beat = noBeat): Piece[] {
+function mergeSmall(pieces: Piece[], min: number, max: number, beat: Beat = noBeat, allowOver = true): Piece[] {
   if (!pieces.some((p) => p.n < min)) return pieces;
   const nodes = pieces.map((p) => ({
     n: p.n,
@@ -261,6 +326,7 @@ function mergeSmall(pieces: Piece[], min: number, max: number, beat: Beat = noBe
     if (!p.alive || p.n !== n || !p.nbs.size) continue; // already joined, changed since queued, or isolated
     const cands = [...p.nbs].map(([j, len]) => ({ j, len, q: nodes[j] }));
     const fits = cands.filter((c) => c.q.n + p.n <= max);
+    if (!fits.length && !allowOver) continue;
     let best: { j: number; perim: number; score: number } | undefined;
     for (const c of fits.length ? fits : cands) {
       const perim = p.perim + c.q.perim - 2 * c.len;
@@ -335,10 +401,10 @@ const MAX_CUT_TRIES = 80;
  * Falls back to a straight line through the middle house only when no road works.
  */
 function cutAlongRoads(piece: Piece, roads: G[], index: BuildingIndex, min: number, beat: Beat = noBeat): Piece[] {
-  const env = piece.g.getEnvelopeInternal();
-  let inside = roads.filter((r) => env.intersects(r.getEnvelopeInternal()) && piece.g.intersects(r));
+  // Only roads that run into the piece; roads along its edge can't cut it.
+  let inside = linesInto(piece.g, roads);
   if (inside.length > MAX_CUT_TRIES) inside = inside.sort((a, b) => b.getLength() - a.getLength()).slice(0, MAX_CUT_TRIES);
-  const exts = [0, 0.0006, 0.0015]; // ~0, 65 m and 165 m
+  const exts = [0, 0.0006, 0.0015, 0.003]; // ~0, 65, 165 and 330 m
   let best: { faces: Piece[]; score: number } | null = null;
   for (const [ei, ext] of exts.entries()) {
     for (const [ri, r] of inside.entries()) {
@@ -353,7 +419,7 @@ function cutAlongRoads(piece: Piece, roads: G[], index: BuildingIndex, min: numb
       const balance = Math.min(...ns) / Math.max(...ns, 1);
       const shape = Math.min(...parts.map((f) => compactness(f.g)));
       const score = balance + 0.3 * shape - ext * 150; // prefer real roads over long extensions
-      if (Math.min(...ns) >= min * 0.6 && (!best || score > best.score)) best = { faces: parts, score };
+      if (Math.min(...ns) >= min * 0.4 && (!best || score > best.score)) best = { faces: parts, score };
     }
     if (best && best.score > 0.55) break;
   }
@@ -366,7 +432,10 @@ function halve(piece: Piece, index: BuildingIndex): Piece[] {
   const pts = index.points(piece.g);
   const wide = (e.getMaxX() - e.getMinX()) * Math.cos((e.centre().y * Math.PI) / 180) > e.getMaxY() - e.getMinY();
   const vals = pts.map((p) => (wide ? p[0] : p[1])).sort((a, b) => a - b);
-  const m = vals[Math.floor(vals.length / 2)];
+  // Cut between the two middle houses, not through one, so no house lands on the border.
+  const mid = Math.floor(vals.length / 2);
+  const above = vals.slice(mid).find((v) => v > vals[mid - 1]) ?? vals[mid];
+  const m = mid > 0 ? (vals[mid - 1] + above) / 2 : vals[mid];
   const pad = 0.001;
   const line = wide
     ? [new Coordinate(m, e.getMinY() - pad), new Coordinate(m, e.getMaxY() + pad)]
@@ -438,6 +507,8 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
   const levels = byLevel.map((ls, i) => ({ ls, i })).filter((l) => l.ls.length);
   const allRoads = levels.flatMap((l) => l.ls);
   const tooBig = (p: Piece) => p.n > opt.max * 1.15;
+  // Bigger roads already cut the pieces; only those that end inside a piece are added again.
+  const levelLines = (k: number, piece: G) => [...levels[k].ls, ...linesInto(piece, levels.slice(0, k).flatMap((l) => l.ls))];
 
   const count = (gs: G[], beat: Beat): Piece[] =>
     gs.map((g, i) => {
@@ -483,14 +554,15 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
       weight: 1,
       run: (_, beat) => count(polygonsOf(removeWater(area, osm.water, part(beat, 0, 0.9))), part(beat, 0.9, 1)),
     },
-    ...levels.map(({ ls, i }) => ({
+    // Each level also uses the bigger roads, so a lane that ends on a residential road still closes a block.
+    ...levels.map(({ i }, k) => ({
       name: `Cutting along ${LEVEL_NAMES[i]}`,
       weight: 3,
       run: eachPiece(
         (p) => p.n > opt.max,
         (p, beat) => {
           beat('Finding where the roads cross', 0);
-          const faces = polygonize(p.g, ls);
+          const faces = polygonize(p.g, levelLines(k, p.g));
           if (faces.length === 1) return [p];
           const counted = count(faces, part(beat, 0.2, 0.4));
           return mergeSmall(counted, opt.min, opt.max, part(beat, 0.4, 1));
@@ -500,6 +572,8 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
     { name: 'Cutting big pieces along dead-end roads', weight: 2, run: eachPiece(tooBig, roadCut) },
     { name: 'Joining small leftover pieces', weight: 1, run: (ps, beat) => mergeSmall(ps, opt.min, opt.max, beat) },
     { name: 'Re-cutting territories that grew too big', weight: 1, run: eachPiece(tooBig, roadCut) },
+    // Re-cutting can leave small pieces again; join them only where that keeps within the maximum.
+    { name: 'Tidying small pieces', weight: 1, run: (ps, beat) => mergeSmall(ps, opt.min, opt.max, beat, false) },
     {
       name: 'Including small ponds',
       weight: 1,
