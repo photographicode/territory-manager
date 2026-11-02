@@ -49,8 +49,15 @@ export interface Assignment {
   note?: string;
 }
 
+/** The most territories a split may make; more is too many to manage. */
+export const MAX_TERRITORIES = 250;
+
 export interface Settings {
   congregation: string;
+  /** Split into a set number of territories, or by houses per territory. */
+  sizeMode: 'count' | 'houses';
+  /** Wanted number of territories; 0 until chosen. */
+  territoryCount: number;
   minBuildings: number;
   maxBuildings: number;
   /** Border levels used for splitting: major, secondary, local, lanes. */
@@ -89,6 +96,8 @@ export interface OsmData {
 
 export const defaultSettings = (): Settings => ({
   congregation: '',
+  sizeMode: 'count',
+  territoryCount: 0,
   minBuildings: 150,
   maxBuildings: 250,
   levels: [true, true, true, true],

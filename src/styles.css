@@ -205,3 +205,7 @@ textarea { resize: vertical; }
 .task-msg { margin: 4px 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 13px; }
 .task-stage { margin-top: 6px; font-weight: 600; }
 .task-warn { margin-top: 6px; color: var(--warn); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 12px; }
+.seg button { border: 0; background: transparent; color: var(--ink); padding: 8px 14px; font: inherit; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }

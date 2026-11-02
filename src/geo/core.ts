@@ -14,7 +14,7 @@ import IndexedPointInAreaLocator from 'jsts/org/locationtech/jts/algorithm/locat
 import TopologyPreservingSimplifier from 'jsts/org/locationtech/jts/simplify/TopologyPreservingSimplifier.js';
 import ArrayList from 'jsts/java/util/ArrayList.js';
 import GeometryPrecisionReducer from 'jsts/org/locationtech/jts/precision/GeometryPrecisionReducer.js';
-import type { Area, OsmData } from '../types';
+import { MAX_TERRITORIES, type Area, type OsmData } from '../types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type G = any;
@@ -302,8 +302,9 @@ function linesInto(area: G, lines: G[]): G[] {
  * Neighbours and shared border lengths are worked out once; after that, joining only adds numbers
  * (area, perimeter, shared length), and the outlines are joined once at the end.
  */
-function mergeSmall(pieces: Piece[], min: number, max: number, beat: Beat = noBeat, allowOver = true): Piece[] {
-  if (!pieces.some((p) => p.n < min)) return pieces;
+function mergeSmall(pieces: Piece[], min: number, max: number, beat: Beat = noBeat, allowOver = true, until?: number): Piece[] {
+  // With `until`, keep joining the smallest pieces (whatever their size) until only that many are left.
+  if (until === undefined ? !pieces.some((p) => p.n < min) : pieces.length <= until) return pieces;
   const nodes = pieces.map((p) => ({
     n: p.n,
     area: p.g.getArea(),
@@ -317,10 +318,12 @@ function mergeSmall(pieces: Piece[], min: number, max: number, beat: Beat = noBe
 
   type Entry = { n: number; area: number; id: number };
   const heap = new MinHeap<Entry>((a, b) => a.n < b.n || (a.n === b.n && a.area < b.area));
-  nodes.forEach((x, id) => x.n < min && heap.push({ n: x.n, area: x.area, id }));
-  const smallAtStart = heap.size;
+  const wanted = (x: (typeof nodes)[number]) => until !== undefined || x.n < min;
+  nodes.forEach((x, id) => wanted(x) && heap.push({ n: x.n, area: x.area, id }));
+  const smallAtStart = until !== undefined ? pieces.length - until : heap.size;
+  let alive = pieces.length;
   let joins = 0;
-  while (heap.size) {
+  while (heap.size && (until === undefined || alive > until)) {
     const { n, id } = heap.pop()!;
     const p = nodes[id];
     if (!p.alive || p.n !== n || !p.nbs.size) continue; // already joined, changed since queued, or isolated
@@ -351,13 +354,14 @@ function mergeSmall(pieces: Piece[], min: number, max: number, beat: Beat = noBe
     }
     p.alive = false;
     p.nbs.clear();
-    if (q.n < min) heap.push({ n: q.n, area: q.area, id: best!.j });
+    alive--;
+    if (wanted(q)) heap.push({ n: q.n, area: q.area, id: best!.j });
     if (++joins % 25 === 0) beat(`Joining small pieces: ${joins} joined`, 0.4 + 0.3 * Math.min(1, joins / smallAtStart));
   }
 
-  const alive = nodes.filter((x) => x.alive);
-  return alive.map((x, i) => {
-    if (x.members.length > 1) beat(`Joining outlines: ${i + 1} of ${alive.length}`, 0.7 + (0.3 * i) / alive.length);
+  const left = nodes.filter((x) => x.alive);
+  return left.map((x, i) => {
+    if (x.members.length > 1) beat(`Joining outlines: ${i + 1} of ${left.length}`, 0.7 + (0.3 * i) / left.length);
     return { g: x.members.length === 1 ? x.members[0] : union(x.members), n: x.n, ...(x.straight ? { straight: true } : {}) };
   });
 }
@@ -366,6 +370,8 @@ export interface SplitOptions {
   min: number;
   max: number;
   levels: boolean[];
+  /** Make exactly this many territories (as near as the map allows). Never more than MAX_TERRITORIES. */
+  count?: number;
   /** What is happening, and how far along the whole split is (0–1). */
   onProgress?: (msg: string, fraction: number) => void;
 }
@@ -507,6 +513,7 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
   const levels = byLevel.map((ls, i) => ({ ls, i })).filter((l) => l.ls.length);
   const allRoads = levels.flatMap((l) => l.ls);
   const tooBig = (p: Piece) => p.n > opt.max * 1.15;
+  const notSliver = (p: Piece) => p.n > 0 || p.g.getArea() > 1e-6;
   // Bigger roads already cut the pieces; only those that end inside a piece are added again.
   const levelLines = (k: number, piece: G) => [...levels[k].ls, ...linesInto(piece, levels.slice(0, k).flatMap((l) => l.ls))];
 
@@ -575,11 +582,34 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
     // Re-cutting can leave small pieces again; join them only where that keeps within the maximum.
     { name: 'Tidying small pieces', weight: 1, run: (ps, beat) => mergeSmall(ps, opt.min, opt.max, beat, false) },
     {
+      name: 'Matching the number of territories',
+      weight: 1,
+      run: (all, beat) => {
+        // Empty slivers (road islands, water edges) are dropped first so they don't count as territories.
+        const ps = all.filter(notSliver);
+        const target = Math.min(opt.count || Infinity, MAX_TERRITORIES);
+        if (ps.length > target) return mergeSmall(ps, opt.min, opt.max, beat, true, target);
+        if (!opt.count || ps.length >= target) return ps;
+        // Too few: cut the biggest territory along roads until there are enough.
+        let out = [...ps];
+        const real = () => out.filter(notSliver).length;
+        for (let tries = 0; real() < target && tries < target * 2; tries++) {
+          beat(`${real()} of ${target} territories; cutting the biggest one`, real() / target);
+          const big = out.reduce((a, p) => (p.n > a.n ? p : a));
+          const halves = cutAlongRoads(big, allRoads, index, Math.min(opt.min, big.n / 4));
+          if (halves.filter(notSliver).length < 2) break;
+          out = [...out.filter((p) => p !== big), ...halves];
+        }
+        // Fold empty slivers left by the cuts into their neighbours, then trim any overshoot.
+        out = mergeSmall(out, 1, Infinity, beat).filter(notSliver);
+        return out.length > target ? mergeSmall(out, opt.min, opt.max, beat, true, target) : out;
+      },
+    },
+    {
       name: 'Including small ponds',
       weight: 1,
       run: (ps, beat) => {
-        // Drop empty slivers (road islands, water edges) that touch nothing.
-        const kept = ps.filter((p) => p.n > 0 || p.g.getArea() > 1e-6);
+        const kept = ps.filter(notSliver);
         const filled = fillPonds(
           kept.map((p) => p.g),
           area,

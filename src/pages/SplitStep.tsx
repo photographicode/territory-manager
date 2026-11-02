@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { PageProps } from '../App';
 import { fetchOsm } from '../geo/osm';
-import { sweepOrder } from '../geo/core';
+import { BuildingIndex, countBuildings, sweepOrder } from '../geo/core';
 import { runSplit, splitKey } from '../geo/runSplit';
 import { clearCheckpoint, loadCheckpoint, loadOsm, saveCheckpoint, saveOsm } from '../store';
 import { bboxOf } from '../map';
-import { uid, type OsmData, type Settings } from '../types';
+import { MAX_TERRITORIES, uid, type OsmData, type Settings } from '../types';
 import { useTask } from '../task';
 import KmlExport from './KmlExport';
 
@@ -26,6 +26,17 @@ export default function SplitStep({ project, update, go }: PageProps) {
     loadOsm().then((d) => d && setOsm(d));
   }, []);
 
+  // Houses inside the boundary, counted after the page has drawn (it takes a moment on big areas).
+  const [total, setTotal] = useState<number | null>(null);
+  const boundaryGeo = project.boundary?.geometry;
+  useEffect(() => {
+    setTotal(null);
+    if (!osm || !boundaryGeo) return;
+    const t = setTimeout(() => setTotal(countBuildings(new BuildingIndex(osm.buildings), boundaryGeo)), 50);
+    return () => clearTimeout(t);
+  }, [osm, boundaryGeo]);
+  const suggested = total ? Math.min(MAX_TERRITORIES, Math.max(1, Math.round(total / 200))) : 0;
+
   const set = (patch: Partial<Settings>) => update((p) => ({ ...p, settings: { ...p.settings, ...patch } }));
 
   if (!project.boundary)
@@ -42,6 +53,15 @@ export default function SplitStep({ project, update, go }: PageProps) {
   const boundary = project.boundary.geometry;
   const bbox = bboxOf(boundary);
   const covers = !!osm && osm.bbox[0] <= bbox[0] && osm.bbox[1] <= bbox[1] && osm.bbox[2] >= bbox[2] && osm.bbox[3] >= bbox[3];
+  // Houses per territory follow from the count: aim for the average, allow about 30% either way.
+  const count = s.territoryCount || suggested;
+  const estimate = total ? Math.max(1, Math.round(total / ((s.minBuildings + s.maxBuildings) / 2))) : 0;
+  const tooMany = s.sizeMode === 'count' ? count > MAX_TERRITORIES : estimate > MAX_TERRITORIES;
+  const sizing = () => {
+    if (s.sizeMode === 'houses' || !total) return { min: s.minBuildings, max: s.maxBuildings, levels: s.levels };
+    const avg = total / count;
+    return { min: Math.max(1, Math.round(avg * 0.7)), max: Math.max(2, Math.round(avg * 1.3)), levels: s.levels, count };
+  };
 
   async function download() {
     const pad = 0.002;
@@ -60,7 +80,7 @@ export default function SplitStep({ project, update, go }: PageProps) {
 
   async function split() {
     if (!osm) return;
-    const opt = { min: s.minBuildings, max: s.maxBuildings, levels: s.levels };
+    const opt = sizing();
     const saved = await loadCheckpoint();
     let resume = saved && saved.key === splitKey(boundary, osm, opt) ? saved : undefined;
     if (resume) {
@@ -88,6 +108,8 @@ Cancel: start again from the beginning`,
       (p) => ({
         ...p,
         finalized: false,
+        // Review flags sizes against the range this split aimed for (worked out from the count, in count mode).
+        settings: { ...p.settings, minBuildings: opt.min, maxBuildings: opt.max },
         territories: ordered.map((r, i) => ({
           id: uid(),
           number: String(i + 1),
@@ -126,17 +148,55 @@ Cancel: start again from the beginning`,
 
       <section className="card-box">
         <h3>2. Territory size</h3>
-        <div className="row">
-          <label className="field">
-            <span>Fewest houses</span>
-            <input type="number" min={1} value={s.minBuildings} onChange={(e) => set({ minBuildings: +e.target.value })} />
-          </label>
-          <label className="field">
-            <span>Most houses</span>
-            <input type="number" min={1} value={s.maxBuildings} onChange={(e) => set({ maxBuildings: +e.target.value })} />
-          </label>
+        <div className="seg" role="radiogroup" aria-label="How to size territories">
+          <button role="radio" aria-checked={s.sizeMode === 'count'} className={s.sizeMode === 'count' ? 'on' : ''} onClick={() => set({ sizeMode: 'count' })}>
+            Number of territories
+          </button>
+          <button role="radio" aria-checked={s.sizeMode === 'houses'} className={s.sizeMode === 'houses' ? 'on' : ''} onClick={() => set({ sizeMode: 'houses' })}>
+            Houses per territory
+          </button>
         </div>
-        <p className="muted">Pieces bigger than the maximum are cut along smaller roads; pieces smaller than the minimum are joined to a neighbour.</p>
+        {s.sizeMode === 'count' ? (
+          <>
+            <label className="field">
+              <span>How many territories (up to {MAX_TERRITORIES})</span>
+              <input
+                type="number"
+                min={1}
+                max={MAX_TERRITORIES}
+                value={count || ''}
+                placeholder={suggested ? String(suggested) : ''}
+                onChange={(e) => set({ territoryCount: Math.max(0, Math.round(+e.target.value)) })}
+              />
+            </label>
+            {total !== null && count > 0 && count <= MAX_TERRITORIES && (
+              <p className="muted">
+                {total.toLocaleString()} houses ÷ {count} = about <b>{Math.round(total / count).toLocaleString()} houses</b> per territory.
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="row">
+              <label className="field">
+                <span>Fewest houses</span>
+                <input type="number" min={1} value={s.minBuildings} onChange={(e) => set({ minBuildings: +e.target.value })} />
+              </label>
+              <label className="field">
+                <span>Most houses</span>
+                <input type="number" min={1} value={s.maxBuildings} onChange={(e) => set({ maxBuildings: +e.target.value })} />
+              </label>
+            </div>
+            {total !== null && <p className="muted">That makes about <b>{estimate}</b> territories from {total.toLocaleString()} houses.</p>}
+          </>
+        )}
+        {tooMany && (
+          <p className="error">
+            {s.sizeMode === 'count' ? `${count} territories` : `About ${estimate} territories`} is too many to manage; the most is {MAX_TERRITORIES}.{' '}
+            {s.sizeMode === 'count' ? 'Choose a smaller number.' : 'Allow more houses per territory, or choose a number of territories instead.'}
+          </p>
+        )}
+        {total === null && covers && <p className="muted">Counting houses…</p>}
       </section>
 
       <section className="card-box">
@@ -159,7 +219,7 @@ Cancel: start again from the beginning`,
         ))}
       </section>
 
-      <button className="btn primary big" disabled={busy || !covers} onClick={split}>
+      <button className="btn primary big" disabled={busy || !covers || tooMany || total === null} onClick={split}>
         Split into territories
       </button>
       {project.territories.length > 0 && (
