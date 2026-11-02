@@ -60,6 +60,8 @@ export interface Settings {
   territoryCount: number;
   /** With a number of territories: make them equal in ground area, in houses, or a mix of both. */
   evenBy: 'area' | 'houses' | 'both';
+  /** Set once the choice above has been made by hand, so later default changes leave it alone. */
+  evenByPicked?: boolean;
   minBuildings: number;
   maxBuildings: number;
   /** Border levels used for splitting: major, secondary, local, lanes. */
@@ -100,7 +102,7 @@ export const defaultSettings = (): Settings => ({
   congregation: '',
   sizeMode: 'count',
   territoryCount: 0,
-  evenBy: 'area',
+  evenBy: 'both',
   minBuildings: 150,
   maxBuildings: 250,
   levels: [true, true, true, true],

@@ -10,9 +10,9 @@ import { useTask } from '../task';
 import KmlExport from './KmlExport';
 
 const EVEN_BY: [Settings['evenBy'], string, string][] = [
+  ['both', 'Both (recommended)', 'A balance of ground and houses: built-up territories are smaller and open-country ones larger, without either extreme.'],
   ['area', 'Area', 'Every territory covers about the same ground. Built-up areas will have many more houses than open country.'],
   ['houses', 'Houses', 'Every territory has about the same number of houses. Open country makes for very large territories.'],
-  ['both', 'Both', 'A balance: built-up territories are smaller and open-country ones larger, without either extreme.'],
 ];
 
 const LEVELS = [
@@ -180,7 +180,7 @@ Cancel: start again from the beginning`,
               <span>Make them equal in</span>
               <div className="seg" role="radiogroup" aria-label="Make territories equal in">
                 {EVEN_BY.map(([id, label]) => (
-                  <button key={id} role="radio" aria-checked={s.evenBy === id} className={s.evenBy === id ? 'on' : ''} onClick={() => set({ evenBy: id })}>
+                  <button key={id} role="radio" aria-checked={s.evenBy === id} className={s.evenBy === id ? 'on' : ''} onClick={() => set({ evenBy: id, evenByPicked: true })}>
                     {label}
                   </button>
                 ))}
@@ -193,7 +193,13 @@ Cancel: start again from the beginning`,
                 {total ? `, with about ${Math.round(total / count).toLocaleString('en-IN')} houses each on average` : ''}.
               </p>
             )}
-            {total !== null && count > 0 && count <= MAX_TERRITORIES && s.evenBy !== 'area' && (
+            {total !== null && count > 0 && count <= MAX_TERRITORIES && s.evenBy === 'both' && (
+              <p className="muted">
+                On average about <b>{Math.round(total / count).toLocaleString('en-IN')} houses</b> and <b>{formatArea(landKm2 / count)}</b> per
+                territory: fewer houses where it is open country, less ground where it is built up.
+              </p>
+            )}
+            {total !== null && count > 0 && count <= MAX_TERRITORIES && s.evenBy === 'houses' && (
               <p className="muted">
                 {total.toLocaleString()} houses ÷ {count} = about <b>{Math.round(total / count).toLocaleString()} houses</b> per territory.
               </p>

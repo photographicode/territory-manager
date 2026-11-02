@@ -26,6 +26,7 @@ export function useProject() {
   useEffect(() => {
     get<Project>(KEY).then((p) => {
       if (p && /\/\/(localhost|127\.)/.test(p.settings?.viewerUrl ?? '')) p.settings.viewerUrl = ''; // from early test builds
+      if (p?.settings?.evenBy === 'area' && !p.settings.evenByPicked) p.settings.evenBy = 'both'; // Area was briefly the default
       setProject(p ? { ...newProject(), ...p, settings: { ...defaultSettings(), ...p.settings } } : newProject());
     });
   }, []);
