@@ -9,10 +9,14 @@ import { colorFor, createMap, toLatLngs } from '../map';
 import { uid, type Area, type OsmData, type Territory } from '../types';
 import { useTask } from '../task';
 import KmlExport from './KmlExport';
+import { byNumber } from './TerritoriesPage';
+
+/** Number territories 1, 2, 3 … from the top of the map to the bottom, so neighbours get nearby numbers. */
+const numbered = (ts: Territory[]) => sweepOrder(ts).map((t, i) => ({ ...t, number: String(i + 1) }));
 
 type Mode = 'select' | 'cut' | 'edit';
 
-export default function ReviewStep({ project, update, undoLast, undoCount, go }: PageProps) {
+export default function ReviewStep({ project, update, undoLast, undoAll, undoCount, go }: PageProps) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map>();
   const group = useRef<L.LayerGroup>();
@@ -89,20 +93,26 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
     if (sel.some((a, i) => i > 0 && !sel.slice(0, i).some((b) => areasTouch(a.geometry, b.geometry))))
       if (!confirm('Some selected territories do not touch each other. Merge anyway?')) return;
     const first = sel[0];
+    const geometry = mergeAreas(sel.map((t) => t.geometry));
     const merged: Territory = {
       ...first,
-      geometry: mergeAreas(sel.map((t) => t.geometry)),
-      buildings: sel.reduce((n, t) => n + t.buildings, 0),
-      locality: sel.map((t) => t.locality).find(Boolean) ?? '',
+      geometry,
+      buildings: index ? recount(geometry) : sel.reduce((n, t) => n + t.buildings, 0),
+      // Both names when they differ ("Kottayam & Nagampadam"), so neither place is lost.
+      locality: [...new Set(sel.map((t) => t.locality.trim()).filter(Boolean))].join(' & '),
+      needsCheck: sel.some((t) => t.needsCheck) || undefined,
     };
-    update((p) => ({ ...p, territories: p.territories.filter((t) => !selected.includes(t.id) || t.id === first.id).map((t) => (t.id === first.id ? merged : t)) }), true);
+    // The merged territory takes one place in the numbering; the rest close up, top to bottom.
+    update(
+      (p) => ({ ...p, territories: numbered(p.territories.filter((t) => !selected.includes(t.id) || t.id === first.id).map((t) => (t.id === first.id ? merged : t))) }),
+      true,
+    );
     setSelected([first.id]);
   }
 
   function cutWith(line: [number, number][]) {
     const { selected: s, territories: ts } = live.current;
     const targets = s.length ? ts.filter((t) => s.includes(t.id)) : ts;
-    let next = Math.max(0, ...ts.map((t) => parseInt(t.number) || 0)) + 1;
     const result: Territory[] = [];
     let changed = 0;
     for (const t of ts) {
@@ -118,12 +128,12 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
       changed++;
       pieces
         .sort((a, b) => recount(b) - recount(a))
-        .forEach((g, i) => result.push({ ...t, id: i ? uid() : t.id, number: i ? String(next++) : t.number, geometry: g, buildings: recount(g) }));
+        .forEach((g, i) => result.push({ ...t, id: i ? uid() : t.id, geometry: g, buildings: recount(g) }));
     }
     setMode('select');
     map.current!.pm.disableDraw();
     if (!changed) return alert('The line must cross the territory completely, from one edge to another.');
-    update((p) => ({ ...p, territories: result }), true);
+    update((p) => ({ ...p, territories: numbered(result) }), true);
   }
 
   function startCut() {
@@ -149,12 +159,20 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
 
   function remove() {
     if (!sel.length || !confirm(`Delete ${sel.length} territor${sel.length > 1 ? 'ies' : 'y'}? The area will not be covered by any card.`)) return;
-    update((p) => ({ ...p, territories: p.territories.filter((t) => !selected.includes(t.id)) }), true);
+    update((p) => ({ ...p, territories: numbered(p.territories.filter((t) => !selected.includes(t.id))) }), true);
   }
 
   function renumber() {
-    if (!confirm('Renumber all territories from north to south (1, 2, 3 …)?')) return;
-    update((p) => ({ ...p, territories: sweepOrder(p.territories).map((t, i) => ({ ...t, number: String(i + 1) })) }), true);
+    if (!confirm('Renumber all territories from top to bottom (1, 2, 3 …)? Numbers you changed by hand are replaced.')) return;
+    update((p) => ({ ...p, territories: numbered(p.territories) }), true);
+  }
+
+  /** Give a territory a new number; the territory that had that number takes the old one. */
+  function setNumber(id: string, value: string) {
+    const number = value.trim();
+    const t = territories.find((x) => x.id === id);
+    if (!t || !number || number === t.number) return;
+    update((p) => ({ ...p, territories: p.territories.map((x) => (x.id === id ? { ...x, number } : x.number === number ? { ...x, number: t.number } : x)) }), true);
   }
 
   function suggestNames(onlyEmpty: boolean) {
@@ -175,7 +193,7 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
   };
 
   const q = filter.trim().toLowerCase();
-  const shown = territories.filter((t) => !q || t.number.toLowerCase() === q || t.locality.toLowerCase().includes(q));
+  const shown = territories.filter((t) => !q || t.number.toLowerCase() === q || t.locality.toLowerCase().includes(q)).sort(byNumber);
   const unnamed = territories.filter((t) => !t.locality.trim()).length;
   const toCheck = territories.filter((t) => t.needsCheck).length;
   const dupNumbers = new Set(territories.map((t) => t.number).filter((n, i, a) => a.indexOf(n) !== i));
@@ -208,8 +226,16 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
           <button className="btn danger" disabled={mode !== 'select' || !sel.length} onClick={remove}>
             Delete
           </button>
-          <button className="btn" disabled={!undoCount || mode !== 'select'} onClick={undoLast}>
-            Undo
+          <button className="btn" disabled={!undoCount || mode !== 'select'} onClick={undoLast} title="Undo the last change">
+            Undo{undoCount ? ` (${undoCount})` : ''}
+          </button>
+          <button
+            className="btn"
+            disabled={!undoCount || mode !== 'select'}
+            onClick={() => confirm(`Undo all ${undoCount} changes made since the app was opened? This can go back to before the last split.`) && undoAll()}
+            title="Undo every change back to the start"
+          >
+            Undo all
           </button>
         </div>
         {mode === 'cut' && (
@@ -244,8 +270,8 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
           {dupNumbers.size > 0 && <span className="warn"> · duplicate numbers: {[...dupNumbers].join(', ')}</span>}
         </div>
         <div className="toolbar small">
-          <button className="btn ghost" onClick={renumber}>
-            Renumber N→S
+          <button className="btn ghost" onClick={renumber} title="Number the territories 1, 2, 3 … from the top of the map to the bottom">
+            Renumber top to bottom
           </button>
           <button
             className="btn ghost"
@@ -289,13 +315,7 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
                     : zoomTo(t.id)
                 }
               >
-                <input
-                  className={`num ${dupNumbers.has(t.number) ? 'dup' : ''}`}
-                  value={t.number}
-                  aria-label="Territory number"
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => patch(t.id, { number: e.target.value })}
-                />
+                <NumberField className={`num ${dupNumbers.has(t.number) ? 'dup' : ''}`} value={t.number} onCommit={(v) => setNumber(t.id, v)} />
                 <input
                   className="loc"
                   value={t.locality}
@@ -334,5 +354,32 @@ export default function ReviewStep({ project, update, undoLast, undoCount, go }:
         <div className="map" ref={el} />
       </div>
     </div>
+  );
+}
+
+/**
+ * A territory number that is only applied when you press Enter or leave the box, so typing "12"
+ * doesn't swap with territory 1 on the way. Escape puts the old number back.
+ */
+function NumberField({ value, onCommit, className }: { value: string; onCommit: (v: string) => void; className: string }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      className={className}
+      value={draft}
+      aria-label="Territory number"
+      title="Type a new number and press Enter. The territory that had that number gets this one's old number."
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => (draft.trim() ? onCommit(draft) : setDraft(value))}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        if (e.key === 'Escape') {
+          setDraft(value);
+          setTimeout(() => (e.target as HTMLInputElement).blur());
+        }
+      }}
+    />
   );
 }

@@ -807,9 +807,49 @@ function evenOut(
     }
   };
 
+  // Straighten borders: a block goes to the neighbour it borders more than its own territory when that
+  // makes the border shorter (borders along main and secondary roads count as shorter), while both
+  // territories stay within 10% of average, or the move evens them out. This takes out the jigsaw tabs
+  // and staircases that evening out sizes block by block leaves, so borders follow whole streets.
+  const straighten = (beat: Beat) => {
+    const avg = size.reduce((a, b) => a + b, 0) / k || 1;
+    const perim = blocks.map((b) => b.g.getLength());
+    const PASSES = 30;
+    for (let pass = 0; pass < PASSES; pass++) {
+      let moved = 0;
+      blocks.forEach((b, i) => {
+        const from = b.owner;
+        if (members[from].size <= 1) return;
+        const by = new Map<number, number>();
+        for (const [j, len] of nbs[i]) by.set(blocks[j].owner, (by.get(blocks[j].owner) ?? 0) + cutCost(i, j, len));
+        const own = by.get(from) ?? 0;
+        let to = -1;
+        let best = 0.05 * perim[i];
+        for (const [t, c] of by) {
+          if (t === from || c - own <= best) continue;
+          const nf = size[from] - b.w;
+          const nt = size[t] + b.w;
+          if (!((nf >= avg * 0.9 && nt <= avg * 1.1) || nf >= nt)) continue;
+          [to, best] = [t, c - own];
+        }
+        if (to < 0 || !staysWhole(blocks, nbs, from, i)) return;
+        members[from].delete(i);
+        members[to].add(i);
+        size[from] -= b.w;
+        size[to] += b.w;
+        b.owner = to;
+        moved++;
+      });
+      beat(`Straightening borders: round ${pass + 1}, ${moved} blocks moved`, (pass + 1) / PASSES);
+      if (!moved) break;
+    }
+  };
+
   settleEmpty();
   reconnect();
-  smooth(blocks, nbs, members, size, part(beat, 0.7, 0.85), majorNbs);
+  smooth(blocks, nbs, members, size, part(beat, 0.7, 0.8), majorNbs);
+  settleEmpty();
+  straighten(part(beat, 0.8, 0.85));
   settleEmpty();
 
   return ps.map((p, t) => {
@@ -1043,7 +1083,7 @@ export function trimStrips(ps: Piece[], index: BuildingIndex, beat: Beat = noBea
           }
           gs[t] = keep.length === 1 ? keep[0] : factory.createMultiPolygon(keep);
           for (const [g, j] of gifts) {
-            gs[j] = clean(union([gs[j], g]));
+            gs[j] = clean(dissolve([gs[j], g]));
             changed.add(j);
           }
           changed.add(t);
@@ -1255,7 +1295,39 @@ export function splitByLine(area: Area, line: [number, number][]): Area[] {
 }
 
 export function mergeAreas(areas: Area[]): Area {
-  return toArea(union(areas.map((a) => clean(toJsts(a)))));
+  return toArea(dissolve(areas.map((a) => clean(toJsts(a)))));
+}
+
+/** Drop holes under 1 m across or 1 m² (hairline gaps where two outlines almost meet). */
+function dropSliverHoles(g: G): G {
+  const polys = polygonsOf(g).map((p) => {
+    const keep: G[] = [];
+    for (let h = 0; h < p.getNumInteriorRing(); h++) {
+      const ring = p.getInteriorRingN(h);
+      const a = Math.abs(factory.createPolygon(ring).getArea());
+      if (a > 1 * M * M && (2 * a) / ring.getLength() > 1 * M) keep.push(ring);
+    }
+    return keep.length === p.getNumInteriorRing() ? p : factory.createPolygon(p.getExteriorRing(), keep);
+  });
+  return polys.length === 1 ? polys[0] : factory.createMultiPolygon(polys);
+}
+
+/**
+ * Join areas into one without a seam: hairline gaps along the shared edge (where the outlines'
+ * corners don't quite match) are closed, so no line is left between them.
+ */
+export function dissolve(gs: G[]): G {
+  let u = dropSliverHoles(union(gs));
+  if (polygonsOf(u).length > 1) {
+    // Parts a hair apart: close the gap by growing and shrinking by a metre, if that joins them.
+    try {
+      const closed = dropSliverHoles(clean(GeometryPrecisionReducer.reduce(u.buffer(M, 2).buffer(-M, 2), PM)));
+      if (polygonsOf(closed).length < polygonsOf(u).length && Math.abs(closed.getArea() - u.getArea()) < u.getArea() * 0.005) u = closed;
+    } catch {
+      /* keep the parts as they are */
+    }
+  }
+  return u;
 }
 
 export function areasTouch(a: Area, b: Area): boolean {

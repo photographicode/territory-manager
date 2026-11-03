@@ -26,6 +26,14 @@ describe('cut and merge', () => {
     const merged = mergeAreas(halves);
     expect(merged.type).toBe('Polygon');
   });
+  it('merges territories whose edges are a hair apart into one shape with no seam', () => {
+    const left: Area = { type: 'Polygon', coordinates: [[[76.3, 9.88], [76.305, 9.88], [76.305, 9.89], [76.3, 9.89], [76.3, 9.88]]] };
+    // About 1 cm to the east, with a corner part-way along the shared edge.
+    const right: Area = { type: 'Polygon', coordinates: [[[76.3050001, 9.88], [76.31, 9.88], [76.31, 9.89], [76.3050001, 9.89], [76.3050001, 9.885], [76.3050001, 9.88]]] };
+    const merged = mergeAreas([left, right]);
+    expect(merged.type).toBe('Polygon');
+    expect((merged as GeoJSON.Polygon).coordinates).toHaveLength(1);
+  });
   it('ignores a line that does not cross the territory', () => {
     expect(splitByLine(square, [[76.305, 9.87], [76.305, 9.885]])).toHaveLength(1);
   });

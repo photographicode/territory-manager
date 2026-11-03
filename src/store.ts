@@ -5,7 +5,8 @@ import type { SplitCheckpoint } from './geo/runSplit';
 
 const KEY = 'territory-manager:project';
 const OSM_KEY = 'territory-manager:osm';
-const UNDO_LIMIT = 40;
+// Enough to undo every change of a long review session; snapshots share unchanged territories, so they are small.
+const UNDO_LIMIT = 2000;
 
 const CHECKPOINT_KEY = 'territory-manager:split-checkpoint';
 
@@ -61,13 +62,21 @@ export function useProject() {
     if (prev) setProject(prev);
   }, []);
 
+  /** Go back to how things were before the first change that can still be undone. */
+  const undoAll = useCallback(() => {
+    const first = undo.current[0];
+    undo.current = [];
+    setUndoCount(0);
+    if (first) setProject(first);
+  }, []);
+
   const replace = useCallback((p: Project) => {
     undo.current = [];
     setUndoCount(0);
     setProject(p);
   }, []);
 
-  return { project, update, undoLast, undoCount, replace };
+  return { project, update, undoLast, undoAll, undoCount, replace };
 }
 
 export type ProjectApi = ReturnType<typeof useProject> & { project: Project };
