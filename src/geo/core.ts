@@ -662,6 +662,20 @@ function evenOut(
   };
   const nbs = neighbourLengths(piecesOnly, part(beat, 0.25, 0.4));
 
+  // How spread out a set of blocks is: sums of area, area × position and area × distance² (plus each
+  // block's own spread, taken as a disc's), so sets can be grown block by block.
+  const ba = blocks.map((b) => b.g.getArea() * lonScale);
+  const moment = (i: number, s = 1) => {
+    const { x, y } = blocks[i];
+    const a = ba[i];
+    return [s * a, s * a * x, s * a * y, s * (a * (x * x + y * y) + (a * a) / (2 * Math.PI))];
+  };
+  const addTo = (S: number[], m: number[]) => {
+    for (let d = 0; d < 4; d++) S[d] += m[d];
+  };
+  // 1 for a disc, about 1.05 for a square, 2.2 for a 1:4 band; larger the more spread out (polar moment).
+  const spread = ([A, X, Y, Q]: number[]) => (A > 0 ? (2 * Math.PI * (Q - (X * X + Y * Y) / A)) / (A * A) : 1);
+
   // Divide `ids` into `parts` territories, numbering them from `first`.
   let made = 0;
   const divide = (ids: number[], parts: number, first: number) => {
@@ -672,6 +686,11 @@ function evenOut(
     }
     const total = ids.reduce((a, i) => a + blocks[i].w, 0);
     const share = total / parts;
+    const whole = [0, 0, 0, 0];
+    for (const i of ids) addTo(whole, moment(i));
+    // Shape a side should manage given how many territories it holds: one territory should be about
+    // round; a side holding several can be as long as the area being divided.
+    const fair = (n: number) => (n === 1 ? 1.3 : Math.max(1.3, Math.min(spread(whole), 1.3 + 0.4 * (n - 1))));
     // A cut can leave any whole number of territories' worth of houses on one side (30–70% of them),
     // so it can slide over to run along a railway, river or main road. Among cuts within 5% of a whole
     // number, take the cheapest border; if none qualifies, the one nearest the middle.
@@ -697,10 +716,12 @@ function evenOut(
         const inIds = new Set(ids);
         let houses = 0;
         let border = 0;
+        const side = [0, 0, 0, 0];
         for (let at = 0; at < order.length - 1; at++) {
           const i = order[at];
           inLeft.add(i);
           houses += blocks[i].w;
+          addTo(side, moment(i));
           for (const [j, len] of nbs[i]) if (inIds.has(j)) border += (inLeft.has(j) ? -1 : 1) * cutCost(i, j, len);
           const f = houses / share;
           if (f > hi + 0.5) break;
@@ -709,8 +730,12 @@ function evenOut(
           const middle = Math.abs(houses - (total * Math.floor(parts / 2)) / parts) / share;
           if (!nearest || middle < nearest.miss) nearest = { order, at, left: Math.floor(parts / 2), miss: middle };
           if (miss > 0.05) continue;
-          // Slightly prefer even halves, which keep the pieces compact.
-          const cost = border * (1 + 4 * miss) * (1 + 0.5 * Math.abs(left / parts - 0.5));
+          // Slightly prefer even halves, which keep the pieces compact, and avoid sides that come out as
+          // long bands or wrap round a neighbour: a short border along main roads is no use if it leaves
+          // a territory 4 km long and a few hundred metres wide.
+          const rest = whole.map((v, d) => v - side[d]);
+          const long = Math.max(0, spread(side) - fair(left)) + Math.max(0, spread(rest) - fair(parts - left));
+          const cost = border * (1 + 4 * miss) * (1 + 0.5 * Math.abs(left / parts - 0.5)) * (1 + 2 * long);
           if (!best || cost < best.cost) best = { order, at, left, cost };
         }
       }
