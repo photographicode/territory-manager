@@ -409,6 +409,10 @@ export interface SplitOptions {
   count?: number;
   /** What to share out evenly between the territories: ground area, houses (default), or both equally. */
   evenBy?: 'area' | 'houses' | 'both';
+  /** Lakes and big ponds: cut out of the territories (default), or kept inside them. */
+  water?: 'exclude' | 'include';
+  /** Hand narrow strips (land between a road and a lake or railway, say) to the neighbour they run along. Default on. */
+  trimStrips?: boolean;
   /** What is happening, and how far along the whole split is (0–1). */
   onProgress?: (msg: string, fraction: number) => void;
 }
@@ -495,17 +499,7 @@ function halve(piece: Piece, index: BuildingIndex): Piece[] {
  * become part of their territory anyway; the rest is joined first, then cut out once.
  */
 function removeWater(area: G, water: Area[], beat: Beat): G {
-  const env = area.getEnvelopeInternal();
-  const hits: G[] = [];
-  for (const [i, w] of water.entries()) {
-    beat(`Checking water area ${i + 1} of ${water.length}`, (0.4 * i) / water.length);
-    try {
-      const wg = clean(toJsts(w));
-      if (env.intersects(wg.getEnvelopeInternal()) && areaM2(wg) > POND_MAX_M2 && area.intersects(wg)) hits.push(wg);
-    } catch {
-      /* skip broken water polygons */
-    }
-  }
+  const hits = bigWater(area, water, part(beat, 0, 0.4));
   if (!hits.length) return area;
   try {
     beat(`Combining ${hits.length} lakes, ponds and rivers`, 0.4);
@@ -525,6 +519,22 @@ function removeWater(area: G, water: Area[], beat: Beat): G {
     }
     return a;
   }
+}
+
+/** Lakes and rivers bigger than POND_MAX_M2 that reach into the area. */
+function bigWater(area: G, water: Area[], beat: Beat = noBeat): G[] {
+  const env = area.getEnvelopeInternal();
+  const hits: G[] = [];
+  for (const [i, w] of water.entries()) {
+    beat(`Checking water area ${i + 1} of ${water.length}`, i / water.length);
+    try {
+      const wg = clean(toJsts(w));
+      if (env.intersects(wg.getEnvelopeInternal()) && areaM2(wg) > POND_MAX_M2 && area.intersects(wg)) hits.push(wg);
+    } catch {
+      /* skip broken water polygons */
+    }
+  }
+  return hits;
 }
 
 /** Leave out empty specks (under 0.5% of the area, no houses) that joining outlines can leave behind. */
@@ -592,10 +602,24 @@ function evenOut(
   major: G[] = [],
   secondary: G[] = [],
   evenBy: 'area' | 'houses' | 'both' = 'houses',
+  wet: G[] = [],
 ): Piece[] {
   const byArea = evenBy !== 'houses';
   const k = ps.length;
   if (k < 2) return ps;
+  // Ground means land: lakes kept inside the territories don't count towards their area.
+  const land = (g: G) => {
+    let a = g.getArea();
+    const env = g.getEnvelopeInternal();
+    for (const w of wet)
+      if (env.intersects(w.getEnvelopeInternal()))
+        try {
+          a -= g.intersection(w).getArea();
+        } catch {
+          /* count it as land */
+        }
+    return Math.max(0, a);
+  };
   // `w` is what gets shared out evenly: the block's ground area, its houses, or (both) an equal mix of
   // its share of all the ground and its share of all the houses.
   const blocks: { g: G; n: number; w: number; owner: number; x: number; y: number; straight: boolean }[] = [];
@@ -604,12 +628,12 @@ function evenOut(
   // is divided into a grid of smaller cells, so the area can still be shared out evenly.
   const areaShare = ps.reduce((a, p) => a + p.g.getArea(), 0) / k;
   const cell = Math.sqrt(areaShare / 12);
-  const totalArea = ps.reduce((a, p) => a + p.g.getArea(), 0) || 1;
+  const totalArea = (byArea ? ps.reduce((a, p) => a + land(p.g), 0) : 0) || 1;
   const totalHouses = ps.reduce((a, p) => a + p.n, 0) || 1;
   const addBlock = (g: G, t: number, straight: boolean) => {
     const c = g.getInteriorPoint().getCoordinate();
     const n = index.count(g);
-    const w = evenBy === 'houses' ? n : evenBy === 'area' ? g.getArea() / totalArea : (g.getArea() / totalArea + n / totalHouses) / 2;
+    const w = evenBy === 'houses' ? n : evenBy === 'area' ? land(g) / totalArea : (land(g) / totalArea + n / totalHouses) / 2;
     blocks.push({ g, n, w, owner: t, x: c.x * lonScale, y: c.y, straight });
   };
   ps.forEach((p, t) => {
@@ -942,6 +966,102 @@ function absorbStrays(ps: Piece[], count: number, beat: Beat = noBeat): Piece[] 
   return out.filter((_, i) => !gone.has(i));
 }
 
+/** Metres to degrees. Near enough everywhere people live; east–west distances shrink towards the poles. */
+const M = 1 / 111320;
+
+/** Narrow parts of a territory: what is left when its outline is shrunk by `r` and grown back. Long ones only. */
+function narrowParts(g: G, r: number): G[] {
+  try {
+    const opened = g.buffer(-r, 4).buffer(r * 1.05, 4);
+    return polygonsOf(g.difference(opened)).filter((s) => s.getArea() >= 4 * r * r && s.getLength() / 2 >= 6 * r);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Hand narrow strips to the neighbour they run along. Borders that follow roads, water and railways
+ * can leave a territory with a long thin tail, such as the land between a road and a lake or between
+ * a road and a railway, joined to the rest only at one end. Each strip (under `width` metres across)
+ * goes to the neighbour that shares the most border with it, if that is at least 40% of the strip's
+ * length, so it is not a tail there too. Parts of the territory the strip was the only link to go
+ * with it to their own best neighbour; strips that are most of their territory are left alone.
+ */
+export function trimStrips(ps: Piece[], index: BuildingIndex, beat: Beat = noBeat, width = 50): Piece[] {
+  const r = (width / 2) * M;
+  const gs = ps.map((p) => p.g);
+  const changed = new Set<number>();
+  // The territory sharing the longest border with `x` (not `t`), and the length shared.
+  const neighbour = (x: G, t: number) => {
+    const env = x.getEnvelopeInternal();
+    const edge = x.getBoundary();
+    let to = -1;
+    let len = 0;
+    gs.forEach((g, j) => {
+      if (j === t || !env.intersects(g.getEnvelopeInternal())) return;
+      try {
+        const l = edge.intersection(g).getLength();
+        if (l > len) [to, len] = [j, l];
+      } catch {
+        /* not this one */
+      }
+    });
+    return { to, len };
+  };
+  const ROUNDS = 2;
+  for (let round = 0; round < ROUNDS; round++) {
+    let moved = 0;
+    for (let t = 0; t < gs.length; t++) {
+      beat(`Round ${round + 1}: checking territory ${t + 1} of ${gs.length} for narrow strips`, (round + t / gs.length) / ROUNDS);
+      const whole = gs[t].getArea();
+      for (const raw of narrowParts(gs[t], r)) {
+        try {
+          const strip = clean(GeometryPrecisionReducer.reduce(raw, PM));
+          if (strip.isEmpty() || strip.getArea() > whole * 0.5) continue;
+          const parts = polygonsOf(gs[t].difference(strip)).sort((a, b) => b.getArea() - a.getArea());
+          if (!parts.length) continue;
+          const cutOff = parts.slice(1);
+          if (cutOff.reduce((a, p) => a + p.getArea(), 0) + strip.getArea() > whole * 0.5) continue;
+          const to = neighbour(strip, t);
+          let gifts: [G, number][] = [];
+          if (to.to >= 0 && to.len >= 0.4 * (strip.getLength() / 2)) gifts = [[strip, to.to]];
+          else {
+            // A long strip beside several territories: cut it into short lengths, each to the one beside it.
+            const chunks = polygonize(strip, gridLines(strip.getEnvelopeInternal(), 150 * M));
+            for (const c of chunks) {
+              const n = neighbour(c, t);
+              if (n.to < 0 || !n.len) break;
+              gifts.push([c, n.to]);
+            }
+            if (gifts.length < chunks.length || !gifts.length) continue;
+          }
+          const keep = [parts[0]];
+          for (const p of cutOff) {
+            const n = neighbour(p, t);
+            if (n.to < 0 || !n.len) keep.push(p);
+            else gifts.push([p, n.to]);
+          }
+          gs[t] = keep.length === 1 ? keep[0] : factory.createMultiPolygon(keep);
+          for (const [g, j] of gifts) {
+            gs[j] = clean(union([gs[j], g]));
+            changed.add(j);
+          }
+          changed.add(t);
+          moved++;
+        } catch {
+          /* leave this strip where it is */
+        }
+      }
+    }
+    if (!moved) break;
+  }
+  return ps.map((p, i) => {
+    if (!changed.has(i)) return p;
+    const g = dropCrumbs(gs[i], index);
+    return { ...p, g, n: index.count(g) };
+  });
+}
+
 const LEVEL_NAMES = ['main roads, rivers and railways', 'secondary roads', 'local roads and streams', 'lanes and footpaths'];
 
 export interface SplitStage {
@@ -966,6 +1086,7 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
   );
   const levels = byLevel.map((ls, i) => ({ ls, i })).filter((l) => l.ls.length);
   const allRoads = levels.flatMap((l) => l.ls);
+  const keepWater = opt.water === 'include';
   const tooBig = (p: Piece) => p.n > opt.max * 1.15;
   const notSliver = (p: Piece) => p.n > 0 || p.g.getArea() > 1e-6;
   // Bigger roads already cut the pieces; only those that end inside a piece are added again.
@@ -1010,11 +1131,13 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
     };
 
   return [
-    {
-      name: 'Removing lakes and rivers',
-      weight: 1,
-      run: (_, beat) => count(polygonsOf(removeWater(area, osm.water, part(beat, 0, 0.9))), part(beat, 0.9, 1)),
-    },
+    keepWater
+      ? { name: 'Preparing the boundary', weight: 1, run: (_, beat) => count(polygonsOf(area), beat) }
+      : {
+          name: 'Removing lakes and rivers',
+          weight: 1,
+          run: (_, beat) => count(polygonsOf(removeWater(area, osm.water, part(beat, 0, 0.9))), part(beat, 0.9, 1)),
+        },
     // Each level also uses the bigger roads, so a lane that ends on a residential road still closes a block.
     ...levels.map(({ i }, k) => ({
       name: `Cutting along ${LEVEL_NAMES[i]}`,
@@ -1068,9 +1191,14 @@ export function splitStages(boundary: Area, osm: OsmData, opt: SplitOptions): Sp
     {
       name: 'Evening out territory sizes',
       weight: 2,
-      run: (ps, beat) =>
-        evenOut(ps, allRoads, index, beat, opt.levels[0] ? byLevel[0] : [], opt.levels[1] ? byLevel[1] : [], opt.evenBy ?? 'houses'),
+      run: (ps, beat) => {
+        // Lakes kept inside territories are found again here, so they don't count as ground.
+        const wet = keepWater && opt.evenBy && opt.evenBy !== 'houses' ? bigWater(area, osm.water, part(beat, 0, 0.05)) : [];
+        const sub = wet.length ? part(beat, 0.05, 1) : beat;
+        return evenOut(ps, allRoads, index, sub, opt.levels[0] ? byLevel[0] : [], opt.levels[1] ? byLevel[1] : [], opt.evenBy ?? 'houses', wet);
+      },
     },
+    ...(opt.trimStrips === false ? [] : [{ name: 'Removing narrow strips', weight: 1, run: (ps: Piece[], beat: Beat) => trimStrips(ps, index, beat) }]),
     {
       name: 'Including small ponds',
       weight: 1,

@@ -15,6 +15,11 @@ const EVEN_BY: [Settings['evenBy'], string, string][] = [
   ['houses', 'Houses', 'Every territory has about the same number of houses. Open country makes for very large territories.'],
 ];
 
+const WATER: [Settings['water'], string, string][] = [
+  ['exclude', 'Leave out', 'Lakes, reservoirs and ponds over 10 ha are cut out of the territories, and their shores become borders.'],
+  ['include', 'Include', 'Lakes and big ponds stay inside the territories, so the map has no gaps. Water is not counted as ground when evening out areas.'],
+];
+
 const LEVELS = [
   ['Major borders', 'Railway, rivers, canals, national/state highways and main roads'],
   ['Secondary roads', 'Secondary and tertiary roads'],
@@ -65,9 +70,9 @@ export default function SplitStep({ project, update, go }: PageProps) {
   const estimate = total ? Math.max(1, Math.round(total / ((s.minBuildings + s.maxBuildings) / 2))) : 0;
   const tooMany = s.sizeMode === 'count' ? count > MAX_TERRITORIES : estimate > MAX_TERRITORIES;
   const sizing = () => {
-    if (s.sizeMode === 'houses' || !total) return { min: s.minBuildings, max: s.maxBuildings, levels: s.levels };
+    if (s.sizeMode === 'houses' || !total) return { min: s.minBuildings, max: s.maxBuildings, levels: s.levels, water: s.water };
     const avg = total / count;
-    return { min: Math.max(1, Math.round(avg * 0.7)), max: Math.max(2, Math.round(avg * 1.3)), levels: s.levels, count, evenBy: s.evenBy };
+    return { min: Math.max(1, Math.round(avg * 0.7)), max: Math.max(2, Math.round(avg * 1.3)), levels: s.levels, count, evenBy: s.evenBy, water: s.water };
   };
 
   async function download() {
@@ -247,6 +252,17 @@ Cancel: start again from the beginning`,
             </span>
           </label>
         ))}
+        <div className="field">
+          <span>Lakes and big ponds</span>
+          <div className="seg" role="radiogroup" aria-label="Lakes and big ponds">
+            {WATER.map(([id, label]) => (
+              <button key={id} role="radio" aria-checked={s.water === id} className={s.water === id ? 'on' : ''} onClick={() => set({ water: id })}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="muted tiny">{WATER.find(([id]) => id === s.water)?.[2]}</span>
+        </div>
       </section>
 
       <button className="btn primary big" disabled={busy || !covers || tooMany || total === null} onClick={split}>

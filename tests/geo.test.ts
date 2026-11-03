@@ -88,6 +88,24 @@ describe('automatic split', () => {
   });
 });
 
+describe('narrow strips', () => {
+  it('hands a thin tail to the neighbour it runs along', async () => {
+    const { trimStrips, BuildingIndex, toJsts } = await import('../src/geo/core');
+    // Territory 0: a block plus a 22 m wide, 890 m long strip running along the top of territory 1.
+    const t0: Area = { type: 'Polygon', coordinates: [[[0, 0.005], [0.01, 0.005], [0.01, 0.0052], [0.002, 0.0052], [0.002, 0.01], [0, 0.01], [0, 0.005]]] };
+    const t1: Area = { type: 'Polygon', coordinates: [[[0, 0], [0.01, 0], [0.01, 0.005], [0, 0.005], [0, 0]]] };
+    const index = new BuildingIndex([[0.001, 0.008], [0.005, 0.002]]);
+    const before = [toJsts(t0), toJsts(t1)];
+    const [a, b] = trimStrips(before.map((g) => ({ g, n: index.count(g) })), index);
+    expect(a.g.getArea()).toBeLessThan(before[0].getArea() - 1.4e-6); // the strip is about 1.6e-6
+    expect(b.g.getArea()).toBeGreaterThan(before[1].getArea() + 1.4e-6);
+    expect(a.g.getArea() + b.g.getArea()).toBeCloseTo(before[0].getArea() + before[1].getArea(), 10);
+    expect(a.g.getNumGeometries()).toBe(1);
+    expect(b.g.getNumGeometries()).toBe(1);
+    expect(a.n + b.n).toBe(2);
+  });
+});
+
 describe('ponds', () => {
   it('makes a small pond part of the territory but keeps a large lake out', async () => {
     const { fillPondsInAreas } = await import('../src/geo/core');

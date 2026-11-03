@@ -20,7 +20,7 @@ export function splitKey(boundary: Area, osm: OsmData, opt: Omit<SplitOptions, '
   const text = JSON.stringify(boundary);
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
-  return [osm.fetchedAt, opt.min, opt.max, opt.count ?? 0, opt.evenBy ?? '', opt.levels.join(''), (h >>> 0).toString(36)].join('|');
+  return [osm.fetchedAt, opt.min, opt.max, opt.count ?? 0, opt.evenBy ?? '', opt.water ?? '', opt.trimStrips ?? '', opt.levels.join(''), (h >>> 0).toString(36)].join('|');
 }
 
 interface Run {
