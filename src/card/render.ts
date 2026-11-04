@@ -16,7 +16,10 @@ const TITLE_FONT = '"Noto Serif", "Noto Sans Malayalam", serif';
 // Keeps the QR at a size phones scan reliably when printed ~37 mm wide (about 90 outline points).
 const MAX_QR_CODE = 450;
 
-export const viewerUrl = (s: Settings) => s.viewerUrl || new URL('view.html', location.href).href;
+// Phones cannot open this computer's address, so cards made from the local copy point at the published one.
+const PUBLIC_VIEWER = 'https://photographicode.github.io/territory-manager/view.html';
+const isLocal = () => /^(localhost|127\.|\[::1\])/.test(location.hostname);
+export const viewerUrl = (s: Settings) => s.viewerUrl || (isLocal() ? PUBLIC_VIEWER : new URL('view.html', location.href).href);
 
 /** Link encoded in the QR code: the territory's own map link, or the viewer page with the outline. */
 export function qrLink(t: Territory, s: Settings): string {

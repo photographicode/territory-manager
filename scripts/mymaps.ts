@@ -1,13 +1,14 @@
 // Make one public Google My Maps map per territory and save each map's link as the territory's card QR link.
 // Runs on this computer and drives a Chrome window; nothing is sent anywhere except Google.
 //
-// Usage: npm run mymaps -- <backup.json> [first number] [last number]
+// From the app: Cards step → "Make My Maps links" (needs the app opened with `npm run app`).
+// From a terminal: npm run mymaps -- <backup.json> [first number] [last number]
 //   <backup.json>  a backup from the app (Backup → Download backup)
 // Writes <backup>-with-map-links.json after every map, so a stopped run carries on where it left off.
 // Restore that file in the app (Backup → Restore) to put the links on the cards.
 //
 // Every step has a second way to do it, each result is checked, and a failed territory is retried on the
-// same half-made map (remembered in <backup>-with-map-links.drafts.json), so failures leave no stray maps.
+// same half-made map (remembered in the Chrome profile folder), so failures leave no stray maps.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,25 +24,18 @@ const PROFILE = join(process.env.LOCALAPPDATA ?? tmpdir(), 'TerritoryManager', '
 const HOME = 'https://www.google.com/maps/d/u/0/';
 const ATTEMPTS = 3;
 
-const [input, from, to] = process.argv.slice(2);
-if (!input) throw new Error('Usage: npm run mymaps -- <backup.json> [first number] [last number]');
-const out = input.replace(/(\.json)?$/i, '-with-map-links.json');
-const project: Project = JSON.parse(readFileSync(existsSync(out) ? out : input, 'utf8'));
-const congregation = project.settings.congregation.trim();
-const inRange = (t: Territory) => (!from || +t.number >= +from) && (!to || +t.number <= +to);
-const todo = project.territories
-  .filter((t) => !t.mapUrl && inRange(t))
-  .sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
-console.log(`${todo.length} territories to do; links are saved to ${out}`);
+let congregation = '';
+// Where progress messages go: the terminal, or the app when started from there.
+let say = (msg: string) => console.log(msg);
 
 const mapTitle = (t: Territory) => `${t.number}${t.locality ? ` - ${t.locality}` : ''}${congregation ? ` | ${congregation}` : ''}`;
 
 // Half-made maps (territory id → map id), so a retry or a later run finishes the same map instead of making another.
-const draftsFile = out.replace(/\.json$/i, '.drafts.json');
+const draftsFile = join(PROFILE, 'drafts.json');
 const drafts: Record<string, string> = existsSync(draftsFile) ? JSON.parse(readFileSync(draftsFile, 'utf8')) : {};
 const saveDrafts = () => writeFileSync(draftsFile, JSON.stringify(drafts));
-// Any finished map works as a starting point for the ⋮ → "Create a new map" way.
-let lastMid = project.territories.map((t) => t.mapUrl && new URL(t.mapUrl).searchParams.get('mid')).find(Boolean) || '';
+// Any finished map works as a starting point for the ⋮ → "New map" way.
+let lastMid = '';
 
 async function connect() {
   const tryConnect = () => chromium.connectOverCDP(`http://127.0.0.1:${PORT}`).catch(() => null);
@@ -64,7 +58,7 @@ const visible = (page: Page, text: string) => page.locator(`text=${text} >> visi
 async function signIn(page: Page) {
   await page.goto(HOME);
   if (await visible(page, '/create a new map/i').count()) return;
-  console.log('Sign in to Google in the Chrome window that opened, with the account for territory maps. Waiting…');
+  say('Sign in to Google in the Chrome window that opened, with the account for territory maps. Waiting…');
   // Wait (up to 15 min) for the My Maps home page, wherever the sign-in pages lead.
   for (let i = 0; i < 180; i++) {
     await page.waitForTimeout(5000);
@@ -84,7 +78,7 @@ async function oneOf(what: string, ways: [string, () => Promise<unknown>][]) {
       return await way();
     } catch (e) {
       errors.push(`${name}: ${(e as Error).message.split('\n')[0]}`);
-      console.log(`   ${what}: "${name}" did not work, trying the next way`);
+      say(`   ${what}: "${name}" did not work, trying the next way`);
     }
   }
   throw new Error(`${what} failed (${errors.join('; ')})`);
@@ -276,34 +270,70 @@ async function makeMap(page: Page, t: Territory): Promise<string> {
   return `https://www.google.com/maps/d/viewer?mid=${mid}`;
 }
 
-if (todo.length) {
+export interface LinkJob {
+  log: (msg: string) => void;
+  /** Called as soon as each map is finished and public. */
+  link: (t: Territory, url: string) => void;
+  stopped: () => boolean;
+}
+
+/** Makes a map for each territory without a link; returns how many failed. */
+export async function makeLinks(ts: Territory[], cong: string, job: LinkJob): Promise<number> {
+  congregation = cong.trim();
+  say = job.log;
+  lastMid = ts.map((t) => t.mapUrl && new URL(t.mapUrl).searchParams.get('mid')).find(Boolean) || lastMid;
+  const todo = ts.filter((t) => !t.mapUrl).sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
+  if (!todo.length) return 0;
+  mkdirSync(PROFILE, { recursive: true });
   const { browser, page } = await connect();
-  await signIn(page);
   let failed = 0;
-  for (const [i, t] of todo.entries()) {
-    for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-      try {
-        const link = await makeMap(page, t);
-        project.territories = project.territories.map((x) => (x.id === t.id ? { ...x, mapUrl: link } : x));
-        writeFileSync(out, JSON.stringify(project));
-        delete drafts[t.id];
-        saveDrafts();
-        console.log(`${i + 1}/${todo.length}  ${mapTitle(t)}  ${link}`);
-        break;
-      } catch (e) {
-        const msg = (e as Error).message.split('\n')[0];
-        if (attempt < ATTEMPTS) {
-          console.log(`   ${mapTitle(t)}: attempt ${attempt} failed (${msg}); trying again on the same map`);
-          await page.waitForTimeout(3000 * attempt);
-          continue;
+  try {
+    await signIn(page);
+    for (const [i, t] of todo.entries()) {
+      if (job.stopped()) break;
+      for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+        try {
+          const url = await makeMap(page, t);
+          delete drafts[t.id];
+          saveDrafts();
+          job.link(t, url);
+          say(`${i + 1}/${todo.length}  ${mapTitle(t)}  ${url}`);
+          break;
+        } catch (e) {
+          const msg = (e as Error).message.split('\n')[0];
+          if (attempt < ATTEMPTS) {
+            say(`   ${mapTitle(t)}: attempt ${attempt} failed (${msg}); trying again on the same map`);
+            await page.waitForTimeout(3000 * attempt);
+            continue;
+          }
+          failed++;
+          const shot = join(tmpdir(), `mymaps-error-${t.number}.png`);
+          await page.screenshot({ path: shot }).catch(() => undefined);
+          say(`${i + 1}/${todo.length}  ${mapTitle(t)}  FAILED: ${msg} (screenshot ${shot})`);
         }
-        failed++;
-        const shot = join(tmpdir(), `mymaps-error-${t.number}.png`);
-        await page.screenshot({ path: shot }).catch(() => undefined);
-        console.error(`${i + 1}/${todo.length}  ${mapTitle(t)}  FAILED: ${msg} (screenshot ${shot})`);
       }
     }
+  } finally {
+    await browser.close().catch(() => undefined);
   }
-  await browser.close().catch(() => undefined);
+  return failed;
+}
+
+// Terminal use: npm run mymaps -- <backup.json> [first number] [last number]
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/mymaps.ts')) {
+  const [input, from, to] = process.argv.slice(2);
+  if (!input) throw new Error('Usage: npm run mymaps -- <backup.json> [first number] [last number]');
+  const out = input.replace(/(\.json)?$/i, '-with-map-links.json');
+  const project: Project = JSON.parse(readFileSync(existsSync(out) ? out : input, 'utf8'));
+  const inRange = (t: Territory) => (!from || +t.number >= +from) && (!to || +t.number <= +to);
+  console.log(`Links are saved to ${out}`);
+  const failed = await makeLinks(project.territories.filter((t) => t.mapUrl || inRange(t)), project.settings.congregation, {
+    log: console.log,
+    link: (t, url) => {
+      project.territories = project.territories.map((x) => (x.id === t.id ? { ...x, mapUrl: url } : x));
+      writeFileSync(out, JSON.stringify(project));
+    },
+    stopped: () => false,
+  });
   console.log(failed ? `Done, ${failed} failed; run again to retry them (their half-made maps are reused).` : 'Done. Restore the new file in the app to put the links on the cards.');
 }

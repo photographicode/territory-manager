@@ -126,7 +126,7 @@ textarea { resize: vertical; }
 }
 
 /* sections */
-.stepper { display: flex; gap: 4px; align-items: center; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.stepper { display: flex; gap: 4px; align-items: center; padding: 8px 0; flex-wrap: wrap; flex: 1; justify-content: center; }
 .stepper button { font: inherit; font-size: 14px; border: 1px solid transparent; background: none; color: var(--muted); padding: 6px 12px; border-radius: 99px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
 .stepper button.on { color: var(--ink); border-color: var(--line); background: var(--bg); font-weight: 600; }
 .stepper .dot { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--line); color: var(--ink); font-size: 12px; }
@@ -217,3 +217,7 @@ textarea { resize: vertical; }
 .lm-row { display: flex; gap: 8px; align-items: flex-end; }
 .lm-row .field { flex: 1; }
 .lm-pick { flex: none; }
+
+.mymaps { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 6px; display: flex; flex-direction: column; gap: 8px; }
+.mymaps progress { width: 100%; }
+.mymaps-log { font-size: 11px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; max-height: 140px; overflow: auto; margin: 0; }

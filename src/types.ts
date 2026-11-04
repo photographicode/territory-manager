@@ -88,8 +88,8 @@ export interface Settings {
   viewerUrl: string;
 }
 
-export type Stage = 'boundary' | 'split' | 'review' | 'cards' | 'assign' | 'settings';
-export type Section = 'territories' | 'editor' | 'make' | 'print' | 'backup';
+/** Pages of the app: the five steps in order, then the everyday pages. */
+export type Stage = 'boundary' | 'split' | 'review' | 'cards' | 'print' | 'territories' | 'backup';
 
 export interface Project {
   version: 1;

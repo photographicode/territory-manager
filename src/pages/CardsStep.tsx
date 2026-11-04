@@ -81,12 +81,33 @@ export default function CardsStep({ project, update }: PageProps) {
     if (files) download(`${base} (separate PDFs).zip`, files, 'application/zip');
   }
 
+  async function pngZip() {
+    const files = await task.run(
+      `Making ${ts.length} card images`,
+      async (report, signal) => {
+        const out: Record<string, Uint8Array> = {};
+        for (const [i, x] of ts.entries()) {
+          signal.throwIfAborted();
+          report(`Card ${i + 1} of ${ts.length}: Territory ${x.number}`, i / ts.length);
+          const c = await renderCard(x, s);
+          const blob = await new Promise<Blob | null>((r) => c.toBlob(r, 'image/png'));
+          if (!blob) throw new Error(`Could not draw the card for territory ${x.number}`);
+          out[`${fileName(x)}.png`] = new Uint8Array(await blob.arrayBuffer());
+        }
+        report('Packing the ZIP file…', 1);
+        return zipSync(out, { level: 0 });
+      },
+      { cancellable: true },
+    );
+    if (files) download(`${base} (PNG images).zip`, files, 'application/zip');
+  }
+
   if (!t) return <div className="page">No territories yet.</div>;
 
   return (
     <div className="split-layout cards">
       <aside className="panel">
-        <h2>Print cards</h2>
+        <h2>Print</h2>
         <label className="field">
           <span>Card title</span>
           <input value={s.cardTitle} onChange={(e) => set({ cardTitle: e.target.value })} />
@@ -131,6 +152,9 @@ export default function CardsStep({ project, update }: PageProps) {
           </button>
           <button className="btn" disabled={!!busy} onClick={separatePdfs}>
             Each card as its own PDF (ZIP)
+          </button>
+          <button className="btn" disabled={!!busy} onClick={pngZip}>
+            Each card as a PNG image (ZIP)
           </button>
           <button className="btn" disabled={!!busy} onClick={() => pdf([t], `${fileName(t)}.pdf`)}>
             Only the card shown

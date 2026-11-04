@@ -5,6 +5,7 @@ import { renderCard } from '../card/render';
 import { createMap, toLatLngs } from '../map';
 import { MAX_LANDMARKS, type Landmark } from '../types';
 import { byNumber } from './TerritoriesPage';
+import MyMapsLinks from './MyMapsLinks';
 
 const ll = ([lon, lat]: [number, number]): L.LatLngTuple => [lat, lon];
 const lonLat = (p: L.LatLng): [number, number] => [p.lng, p.lat];
@@ -86,7 +87,7 @@ export default function CardEditor({ project, update }: PageProps) {
   return (
     <div className="split-layout cards">
       <aside className="panel">
-        <h2>Card editor</h2>
+        <h2>Cards</h2>
         <label className="field lm-pick">
           <span>Territory</span>
           <select value={t.id} onChange={(e) => setCurrent(e.target.value)}>
@@ -121,6 +122,7 @@ export default function CardEditor({ project, update }: PageProps) {
         {!marks.length && <p className="muted">No landmarks on this card yet.</p>}
         {marks.length >= MAX_LANDMARKS && <p className="muted tiny">This card has the most landmarks it can hold.</p>}
         {marks.some((l) => !l.text.trim()) && <p className="warn">Boxes without a name are left off the printed card.</p>}
+        <MyMapsLinks project={project} update={update} />
       </aside>
       <div className="preview-pane">
         <div ref={mapEl} className="map lm-map" />

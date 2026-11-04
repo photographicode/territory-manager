@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "mymaps": "tsx scripts/mymaps.ts"
+    "mymaps": "tsx scripts/mymaps.ts",
+    "app": "vite build && tsx scripts/app.ts"
   },
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.20.4",
