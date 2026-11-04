@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "mymaps": "tsx scripts/mymaps.ts",
-    "app": "vite build && tsx scripts/app.ts"
+    "helper": "tsx scripts/helper.ts"
   },
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.20.4",

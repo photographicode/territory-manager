@@ -1,26 +1,13 @@
-// Runs Territory Manager on this computer: serves the built app at http://localhost:4747 and lets it start
-// the Google My Maps job (scripts/mymaps.ts), which needs a local Chrome window a web page cannot open.
-// Start with `npm run app` (or double-click "Territory Manager.cmd").
-import { spawn } from 'node:child_process';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+// Small background helper for the Territory Manager app: it runs the Google My Maps job (scripts/mymaps.ts),
+// which needs a local Chrome window a web page cannot open. The installed app shortcut starts it hidden
+// (launcher/Territory Manager.vbs); `npm run helper` starts it in a terminal.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { extname, join, normalize } from 'node:path';
 import { makeLinks } from './mymaps';
 import type { Territory } from '../src/types';
 
 const PORT = 4747;
-const DIST = join(import.meta.dirname, '..', 'dist');
-// The published copy and the dev server may call the helper too; no other site may.
-const ORIGINS = [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`, 'https://photographicode.github.io', 'http://localhost:5180'];
-const TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.woff2': 'font/woff2',
-};
+// Only the app (published, or the dev server) may use the helper.
+const ORIGINS = ['https://photographicode.github.io', 'http://localhost:5180'];
 
 const job = { running: false, total: 0, failed: 0, log: [] as string[], links: {} as Record<string, string>, stop: false };
 
@@ -69,20 +56,15 @@ createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('Access-Control-Allow-Private-Network', 'true');
-  } else if (origin && req.url?.startsWith('/api/')) return json(res, 403, { error: 'Not allowed' });
+  } else return json(res, 403, { error: 'Not allowed' });
   if (req.method === 'OPTIONS') return void res.writeHead(204).end();
-  const path = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
+  const path = new URL(req.url ?? '/', 'http://x').pathname;
   try {
-    if (path.startsWith('/api/')) return await api(req, res, path);
-    let file = normalize(join(DIST, path === '/' ? 'index.html' : path));
-    if (!file.startsWith(DIST) || !existsSync(file) || statSync(file).isDirectory()) file = join(DIST, 'index.html');
-    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
-    createReadStream(file).pipe(res);
+    await api(req, res, path);
   } catch (e) {
     json(res, 500, { error: (e as Error).message });
   }
-}).listen(PORT, '127.0.0.1', () => {
-  const url = `http://localhost:${PORT}/`;
-  console.log(`Territory Manager is running at ${url} (close this window to stop it)`);
-  if (!process.env.NO_OPEN) spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
-});
+})
+  // A second start (helper already running) just exits.
+  .on('error', (e: NodeJS.ErrnoException) => process.exit(e.code === 'EADDRINUSE' ? 0 : 1))
+  .listen(PORT, '127.0.0.1', () => console.log(`Territory Manager helper is listening on http://127.0.0.1:${PORT}`));

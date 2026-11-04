@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d9553f"/>
+      <stop offset="1" stop-color="#8e2216"/>
+    </linearGradient>
+    <linearGradient id="pin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd166"/>
+      <stop offset="1" stop-color="#f4a33a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- folded map: three panels -->
+  <path d="M96 168 L192 132 L320 172 L416 136 L416 380 L320 416 L192 376 L96 412 Z" fill="#fff"/>
+  <path d="M192 132 L192 376 L320 416 L320 172 Z" fill="#f1e4df"/>
+  <!-- territory outline on the map -->
+  <path d="M132 300 L170 236 L236 252 L268 214 L330 246 L372 300 L320 344 L236 330 L180 352 Z" fill="#a5281b" fill-opacity=".18" stroke="#a5281b" stroke-width="12" stroke-linejoin="round"/>
+  <!-- location pin -->
+  <path d="M256 60 c-52 0 -92 40 -92 90 c0 66 92 150 92 150 s92 -84 92 -150 c0 -50 -40 -90 -92 -90 z" fill="url(#pin)" stroke="#fff" stroke-width="14" stroke-linejoin="round"/>
+  <circle cx="256" cy="150" r="32" fill="#fff"/>
+</svg>
