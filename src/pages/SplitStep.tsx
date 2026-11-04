@@ -33,8 +33,12 @@ export default function SplitStep({ project, update, go }: PageProps) {
   const task = useTask();
   const busy = task.busy;
 
+  const [osmChecked, setOsmChecked] = useState(false);
   useEffect(() => {
-    loadOsm().then((d) => d && setOsm(d));
+    loadOsm().then((d) => {
+      if (d) setOsm(d);
+      setOsmChecked(true);
+    });
   }, []);
 
   // Houses inside the boundary, counted after the page has drawn (it takes a moment on big areas).
@@ -47,6 +51,13 @@ export default function SplitStep({ project, update, go }: PageProps) {
     return () => clearTimeout(t);
   }, [osm, boundaryGeo]);
   const suggested = total ? Math.min(MAX_TERRITORIES, Math.max(1, Math.round(total / 200))) : 0;
+
+  // Every split needs map data, so fetch it as soon as there is a boundary it does not cover yet.
+  useEffect(() => {
+    if (!osmChecked || !boundaryGeo || busy) return;
+    const [w, so, e, n] = bboxOf(boundaryGeo);
+    if (!osm || osm.bbox[0] > w || osm.bbox[1] > so || osm.bbox[2] < e || osm.bbox[3] < n) void download();
+  }, [osmChecked, boundaryGeo]);
 
   const set = (patch: Partial<Settings>) => update((p) => ({ ...p, settings: { ...p.settings, ...patch } }));
 
@@ -151,7 +162,7 @@ Cancel: start again from the beginning`,
             <b>{osm.water.length}</b> water areas · downloaded {new Date(osm.fetchedAt).toLocaleDateString()}
           </p>
         ) : (
-          <p>No map data downloaded for this boundary yet.</p>
+          <p>{busy ? 'Downloading map data for this boundary…' : 'No map data downloaded for this boundary yet.'}</p>
         )}
         <button className="btn" disabled={busy} onClick={download}>
           {covers ? 'Download again' : 'Download map data'}
