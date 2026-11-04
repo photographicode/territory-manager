@@ -50,12 +50,12 @@ async function connect() {
 
 async function signIn(page: Page) {
   await page.goto(HOME);
-  if (await page.getByText('Create a new map').count()) return;
+  if (await page.locator('text=/create a new map/i >> visible=true').count()) return;
   console.log('Sign in to Google in the Chrome window that opened, with the account for territory maps. Waiting…');
   // Wait (up to 15 min) for the My Maps home page, wherever the sign-in pages lead.
   for (let i = 0; i < 180; i++) {
     await page.waitForTimeout(5000);
-    if (page.url().startsWith(HOME.slice(0, -5)) && (await page.getByText('Create a new map').count())) return;
+    if (page.url().startsWith(HOME.slice(0, -5)) && (await page.locator('text=/create a new map/i >> visible=true').count())) return;
     if (!/accounts\.google\.com/.test(page.url()) && !page.url().startsWith('https://www.google.com/maps/d')) await page.goto(HOME).catch(() => undefined);
   }
   throw new Error('Not signed in after 15 minutes');
@@ -66,7 +66,7 @@ async function makeMap(page: Page, t: Territory): Promise<string> {
   writeFileSync(file, territoryKml(t, congregation));
 
   await page.goto(HOME);
-  await page.getByText('Create a new map').first().click();
+  await page.locator('text=/create a new map/i >> visible=true').first().click();
   // First map on an account shows a note about Drive; accept it.
   const note = page.getByRole('button', { name: /^create$/i });
   await Promise.race([page.waitForURL(/\/edit\?mid=/, { timeout: 30000 }), note.click({ timeout: 30000 })]).catch(() => undefined);
@@ -75,29 +75,36 @@ async function makeMap(page: Page, t: Territory): Promise<string> {
   if (!mid) throw new Error('New map has no id');
 
   // Import: the file picker lives in a Google frame; Playwright hands it the file without a dialog.
-  await page.getByText('Import', { exact: true }).first().click();
+  await page.locator('text="Import" >> visible=true').first().click();
   let upload = null;
   for (let i = 0; i < 40 && !upload; i++) {
-    for (const f of page.frames()) if (await f.getByText('Upload', { exact: true }).count()) upload = f;
+    for (const f of page.frames()) if (await f.locator('text="Upload" >> visible=true').count()) upload = f;
     if (!upload) await page.waitForTimeout(500);
   }
   if (!upload) throw new Error('Import window did not open');
-  await upload.getByText('Upload', { exact: true }).first().click();
-  const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 30000 }), upload.getByText('Browse', { exact: true }).first().click()]);
-  await chooser.setFiles(file);
+  await upload.locator('text="Upload" >> visible=true').first().click();
+  // The picker keeps a hidden file input; filling it is what Browse would do.
+  await upload.locator('text="Browse" >> visible=true').first().waitFor({ timeout: 30000 });
+  await page.waitForTimeout(1000);
+  const fileInput = upload.locator('input[type=file]');
+  if (await fileInput.count()) await fileInput.first().setInputFiles(file);
+  else {
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 30000 }), upload.locator('text="Browse" >> visible=true').first().click()]);
+    await chooser.setFiles(file);
+  }
   await page.getByText('Untitled layer').waitFor({ state: 'detached', timeout: 120000 });
 
-  await page.locator('#map-title-desc-bar').click();
-  const titleBox = page.getByRole('dialog').locator('input[type=text]').first();
-  await titleBox.fill(mapTitle(t));
-  await page.getByRole('dialog').getByText('Save', { exact: true }).click();
-  await page.getByRole('dialog').waitFor({ state: 'detached', timeout: 15000 }).catch(() => undefined);
+  await page.locator('#map-title-desc-bar div[aria-label]').first().click();
+  const dialog = page.locator('[role=dialog]:visible');
+  await dialog.locator('input[type=text]').first().fill(mapTitle(t));
+  await dialog.locator('text="Save" >> visible=true').first().click();
+  await dialog.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => undefined);
 
   await page.locator('#map-action-share').click();
   const share = page.locator('#linksharing');
   await share.waitFor({ timeout: 15000 });
   if (!(await isPublic(mid))) await page.locator('label[for=linksharing]').click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+  await page.locator('[role=dialog]:visible [aria-label=Close]').first().click();
 
   for (let i = 0; i < 10; i++) {
     if (await isPublic(mid)) return `https://www.google.com/maps/d/viewer?mid=${mid}`;
