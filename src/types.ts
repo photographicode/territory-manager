@@ -16,7 +16,19 @@ export interface Territory {
   mapUrl?: string;
   /** Held for someone (e.g. a group or campaign) but not yet handed out. */
   reservation?: Reservation;
+  /** Named junctions or landmarks printed in boxes on the card map (at most MAX_LANDMARKS). */
+  landmarks?: Landmark[];
 }
+
+export interface Landmark {
+  text: string;
+  /** The spot itself, marked with a dot: [lon, lat]. */
+  at: [number, number];
+  /** Where the middle of the label box sits: [lon, lat]. */
+  box: [number, number];
+}
+
+export const MAX_LANDMARKS = 4;
 
 export interface Reservation {
   for: string;
@@ -77,7 +89,7 @@ export interface Settings {
 }
 
 export type Stage = 'boundary' | 'split' | 'review' | 'cards' | 'assign' | 'settings';
-export type Section = 'territories' | 'make' | 'print' | 'backup';
+export type Section = 'territories' | 'editor' | 'make' | 'print' | 'backup';
 
 export interface Project {
   version: 1;

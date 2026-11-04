@@ -5,6 +5,7 @@ import BoundaryStep from './pages/BoundaryStep';
 import SplitStep from './pages/SplitStep';
 import ReviewStep from './pages/ReviewStep';
 import CardsStep from './pages/CardsStep';
+import CardEditor from './pages/CardEditor';
 import TerritoriesPage from './pages/TerritoriesPage';
 import SettingsPage from './pages/SettingsPage';
 
@@ -12,6 +13,7 @@ type MakeStep = 'boundary' | 'split' | 'review';
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'territories', label: 'Territories' },
+  { id: 'editor', label: 'Card editor' },
   { id: 'print', label: 'Print cards' },
   { id: 'make', label: 'Make territories' },
   { id: 'backup', label: 'Backup' },
@@ -66,6 +68,7 @@ export default function App() {
         {current === 'make' && currentStep === 'boundary' && <BoundaryStep {...props} />}
         {current === 'make' && currentStep === 'split' && <SplitStep {...props} />}
         {current === 'make' && currentStep === 'review' && <ReviewStep {...props} />}
+        {current === 'editor' && <CardEditor {...props} />}
         {current === 'print' && <CardsStep {...props} />}
         {current === 'territories' && <TerritoriesPage {...props} />}
         {current === 'backup' && <SettingsPage {...props} />}

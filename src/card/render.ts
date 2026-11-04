@@ -6,7 +6,7 @@ import maplibregl from 'maplibre-gl';
 import { CARD_ATTRIBUTION, CARD_STYLE_URL } from './tiles';
 import { encodeArea } from '../geo/codec';
 import { shareOutline } from '../geo/core';
-import type { Area, Settings, Territory } from '../types';
+import type { Area, Landmark, Settings, Territory } from '../types';
 
 export const CARD = { widthIn: 6, heightIn: 4, dpi: 300 };
 const W = CARD.widthIn * CARD.dpi;
@@ -82,8 +82,10 @@ function rings(a: Area): number[][][] {
   return a.type === 'Polygon' ? a.coordinates : a.coordinates.flat();
 }
 
-/** Render an OpenStreetMap background with the territory outline into a w×h region. */
-export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: number, y0: number, w: number, h: number) {
+type Project = (lonLat: [number, number]) => [number, number];
+
+/** Render an OpenStreetMap background with the territory outline into a w×h region; returns lon/lat → canvas pixels. */
+export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: number, y0: number, w: number, h: number): Promise<Project> {
   const cssW = Math.round(w / MAP_SCALE);
   const cssH = Math.round(h / MAP_SCALE);
   const map = await offscreenMap(cssW, cssH);
@@ -113,12 +115,14 @@ export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: num
   ctx.clip();
   ctx.drawImage(map.getCanvas(), x0, y0, w, h);
 
+  const project: Project = (ll) => {
+    const p = map.project(ll);
+    return [x0 + (p.x * w) / cssW, y0 + (p.y * h) / cssH];
+  };
   ctx.beginPath();
   for (const ring of rings(area)) {
     ring.forEach(([lon, lat], i) => {
-      const p = map.project([lon, lat]);
-      const px = x0 + (p.x * w) / cssW;
-      const py = y0 + (p.y * h) / cssH;
+      const [px, py] = project([lon, lat]);
       if (i) ctx.lineTo(px, py);
       else ctx.moveTo(px, py);
     });
@@ -140,6 +144,61 @@ export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: num
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
   ctx.fillText(CARD_ATTRIBUTION, x0 + w - fs / 2, y0 + h - fs * 0.8);
+  ctx.restore();
+  return project;
+}
+
+/** Grey label boxes with a dot on each spot, kept inside the map region. */
+function drawLandmarks(ctx: CanvasRenderingContext2D, list: Landmark[], project: Project, r: { x: number; y: number; w: number; h: number }) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(r.x, r.y, r.w, r.h);
+  ctx.clip();
+  const boxes = list
+    .filter((l) => l.text.trim())
+    .map((l) => {
+      const [px, py] = project(l.at);
+      const [cx, cy] = project(l.box);
+      fitText(ctx, l.text.trim(), (n) => `600 ${n}px ${TEXT_FONT}`, 40, r.w * 0.42);
+      const font = ctx.font;
+      const bw = ctx.measureText(l.text.trim()).width + 70;
+      const bh = 100;
+      const bx = Math.min(Math.max(cx - bw / 2, r.x + 6), r.x + r.w - bw - 6);
+      const by = Math.min(Math.max(cy - bh / 2, r.y + 6), r.y + r.h - bh - 6);
+      return { text: l.text.trim(), font, px, py, bx, by, bw, bh };
+    });
+  // Leader lines first, so boxes and dots sit on top of them.
+  ctx.strokeStyle = '#555';
+  ctx.lineWidth = 3;
+  for (const b of boxes) {
+    ctx.beginPath();
+    ctx.moveTo(b.px, b.py);
+    ctx.lineTo(b.bx + b.bw / 2, b.by + b.bh / 2);
+    ctx.stroke();
+  }
+  for (const b of boxes) {
+    ctx.fillStyle = '#c8c8c8';
+    ctx.fillRect(b.bx, b.by, b.bw, b.bh);
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(b.bx, b.by, b.bw, b.bh);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(b.bx + 7, b.by + 7, b.bw - 14, b.bh - 14);
+    ctx.font = b.font;
+    ctx.fillStyle = '#111';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(b.text, b.bx + b.bw / 2, b.by + b.bh / 2 + 2);
+  }
+  for (const b of boxes) {
+    ctx.beginPath();
+    ctx.arc(b.px, b.py, 13, 0, 2 * Math.PI);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = '#a5281b';
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -192,7 +251,7 @@ export async function renderCard(t: Territory, s: Settings): Promise<HTMLCanvasE
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d')!;
-  await ensureFonts(`${t.locality}${s.footerText}${s.cardTitle}${s.localityLabel}${s.numberLabel}`);
+  await ensureFonts(`${t.locality}${t.landmarks?.map((l) => l.text).join('') ?? ''}${s.footerText}${s.cardTitle}${s.localityLabel}${s.numberLabel}`);
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, W, H);
   ctx.strokeStyle = '#111';
@@ -226,7 +285,8 @@ export async function renderCard(t: Territory, s: Settings): Promise<HTMLCanvasE
 
   // Map and QR
   const map = { x: 60, y: 255, w: 1190, h: 690 };
-  await drawMap(ctx, t.geometry, map.x, map.y, map.w, map.h);
+  const project = await drawMap(ctx, t.geometry, map.x, map.y, map.w, map.h);
+  if (t.landmarks?.length) drawLandmarks(ctx, t.landmarks, project, map);
   ctx.lineWidth = 2;
   ctx.strokeStyle = '#555';
   ctx.strokeRect(map.x, map.y, map.w, map.h);
