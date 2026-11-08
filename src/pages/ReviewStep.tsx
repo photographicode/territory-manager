@@ -4,8 +4,10 @@ import '@geoman-io/leaflet-geoman-free';
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
 import type { PageProps } from '../App';
 import { areasTouch, BuildingIndex, countBuildings, fillPondsInAreas, mergeAreas, splitByLine, suggestLocality, sweepOrder } from '../geo/core';
-import { loadOsm } from '../store';
-import { colorFor, createMap, toLatLngs } from '../map';
+import { loadOsm, saveOsm } from '../store';
+import { fetchOsm } from '../geo/osm';
+import type { RefineOut } from '../geo/refine.worker';
+import { bboxOf, colorFor, createMap, toLatLngs } from '../map';
 import { uid, type Area, type OsmData, type Territory } from '../types';
 import { useTask } from '../task';
 import KmlExport from './KmlExport';
@@ -162,6 +164,46 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
     update((p) => ({ ...p, territories: numbered(p.territories.filter((t) => !selected.includes(t.id))) }), true);
   }
 
+  /** Move every outline onto the nearest roads (for territories drawn by hand or imported from KML). */
+  async function snapToRoads() {
+    const areas = territories.map((t) => t.geometry);
+    const boxes = areas.map(bboxOf);
+    const box: [number, number, number, number] = [
+      Math.min(...boxes.map((b) => b[0])) - 0.002,
+      Math.min(...boxes.map((b) => b[1])) - 0.002,
+      Math.max(...boxes.map((b) => b[2])) + 0.002,
+      Math.max(...boxes.map((b) => b[3])) + 0.002,
+    ];
+    const done = await task.run(
+      'Snapping borders to the roads',
+      async (report, signal) => {
+        let data = osm;
+        if (!data || data.bbox[0] > box[0] || data.bbox[1] > box[1] || data.bbox[2] < box[2] || data.bbox[3] < box[3]) {
+          data = await fetchOsm(box, (d, f) => report(`Downloading roads: ${d}`, (f ?? 0) * 0.4), signal);
+          await saveOsm(data);
+          setOsm(data);
+        }
+        const roads = data;
+        const out = await new Promise<Area[]>((ok, bad) => {
+          const w = new Worker(new URL('../geo/refine.worker.ts', import.meta.url), { type: 'module' });
+          signal.addEventListener('abort', () => (w.terminate(), bad(new DOMException('Cancelled', 'AbortError'))), { once: true });
+          w.onmessage = (e: MessageEvent<RefineOut>) => {
+            const m = e.data;
+            if (m.type === 'progress') report(m.detail, 0.4 + 0.6 * m.fraction);
+            else (w.terminate(), m.type === 'done' ? ok(m.areas) : bad(new Error(m.msg)));
+          };
+          w.onerror = (e) => (w.terminate(), bad(new Error(e.message || 'The road snapping stopped')));
+          w.postMessage({ areas, osm: roads });
+        });
+        const index = new BuildingIndex(roads.buildings);
+        return out.map((g) => ({ g, n: countBuildings(index, g) }));
+      },
+      { cancellable: true },
+    );
+    if (done)
+      update((p) => ({ ...p, territories: p.territories.map((t, i) => (done[i] ? { ...t, geometry: done[i].g, buildings: done[i].n } : t)) }), true);
+  }
+
   function renumber() {
     if (!confirm('Renumber all territories from top to bottom (1, 2, 3 …)? Numbers you changed by hand are replaced.')) return;
     update((p) => ({ ...p, territories: numbered(p.territories) }), true);
@@ -270,6 +312,9 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
           {dupNumbers.size > 0 && <span className="warn"> · duplicate numbers: {[...dupNumbers].join(', ')}</span>}
         </div>
         <div className="toolbar small">
+          <button className="btn ghost" disabled={task.busy} onClick={snapToRoads} title="Move hand-drawn or imported borders onto the nearest roads; Undo puts them back">
+            Snap borders to roads
+          </button>
           <button className="btn ghost" onClick={renumber} title="Number the territories 1, 2, 3 … from the top of the map to the bottom">
             Renumber top to bottom
           </button>

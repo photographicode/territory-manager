@@ -1319,6 +1319,76 @@ export function splitByLine(area: Area, line: [number, number][]): Area[] {
   return polygonize(g, [l]).map(toArea);
 }
 
+/** A street block goes whole to the territory holding most of it when the rest is only a strip this wide (m). */
+const SNAP_STRIP = 30;
+/** How far (m) past the drawn outline to look for the road it was meant to follow. */
+const SNAP_REACH = 40;
+
+/**
+ * Move hand-drawn territory outlines onto the roads: the area is cut into street blocks, and each block
+ * that lies mostly in one territory goes to that territory whole, so borders follow the roads and gaps
+ * and overlaps between neighbours close. Where a drawn border really crosses a block (no road there),
+ * the block is shared along the drawn line. A territory that would lose much of itself keeps its own line.
+ */
+export function refineAreas(areas: Area[], osm: OsmData, beat: Beat = noBeat): Area[] {
+  // Nearly parallel edges can break an overlay; retry such a step on the 0.1 m grid.
+  const grid = (g: G) => clean(GeometryPrecisionReducer.reduce(g, PM));
+  const overlay = (op: 'intersection' | 'difference' | 'union', a: G, b: G): G => {
+    try {
+      return a[op](b);
+    } catch {
+      return grid(a)[op](grid(b));
+    }
+  };
+  const ts = areas.map((a) => grid(toJsts(a)));
+  const sizes = ts.map((t) => t.getArea());
+  const envs = ts.map((t) => t.getEnvelopeInternal());
+  beat('Finding the street blocks', 0);
+  const region = clean(union(ts).buffer(SNAP_REACH * M));
+  const env = region.getEnvelopeInternal();
+  const roads = osm.lines
+    .filter((l) => l.coords.length > 1)
+    .map((l) => factory.createLineString(l.coords.map(([x, y]) => new Coordinate(x, y))))
+    .filter((l) => env.intersects(l.getEnvelopeInternal()));
+  const blocks = polygonize(region, roads);
+  const hitsOf = blocks.map((b, i) => {
+    if (i % 200 === 0) beat(`Matching street block ${i + 1} of ${blocks.length}`, 0.2 + (0.6 * i) / blocks.length);
+    const be = b.getEnvelopeInternal();
+    return ts
+      // Keep only the area of an overlap; touching edges come back as stray lines.
+      .map((t, k) => (envs[k].intersects(be) ? { k, g: factory.createMultiPolygon(polygonsOf(overlay('intersection', t, b))) } : null))
+      .filter((h): h is { k: number; g: G } => !!h && h.g.getArea() > 0)
+      .sort((a, b) => b.g.getArea() - a.g.getArea());
+  });
+
+  const assign = (keep: Set<number>) => {
+    const parts: G[][] = ts.map(() => []);
+    blocks.forEach((b, i) => {
+      const hits = hitsOf[i];
+      if (!hits.length) return;
+      // The drawn border is meant to follow the block's road when what would change hands is only a thin edge strip.
+      const moved = b.getArea() - hits[0].g.getArea();
+      const snap = hits[0].g.getArea() >= 0.5 * b.getArea() && moved <= (SNAP_STRIP * M * b.getLength()) / 2;
+      if (snap && !hits.some((h) => h !== hits[0] && keep.has(h.k))) parts[hits[0].k].push(b);
+      else {
+        // Shared along the drawn line; where drawn territories overlap, the bigger share wins.
+        let taken: G = null;
+        for (const h of hits) {
+          const g = taken ? overlay('difference', h.g, taken) : h.g;
+          if (g.getArea() > 0) parts[h.k].push(g);
+          taken = taken ? overlay('union', taken, h.g) : h.g;
+        }
+      }
+    });
+    return parts;
+  };
+  let parts = assign(new Set());
+  const shrunk = new Set(ts.map((_, k) => k).filter((k) => parts[k].reduce((a, g) => a + g.getArea(), 0) < 0.6 * sizes[k]));
+  if (shrunk.size) parts = assign(shrunk);
+  beat('Joining the blocks into territories', 0.9);
+  return parts.map((p, k) => (p.length ? toArea(dissolve(p)) : areas[k]));
+}
+
 export function mergeAreas(areas: Area[]): Area {
   return toArea(dissolve(areas.map((a) => clean(toJsts(a)))));
 }

@@ -3,6 +3,7 @@ import L from 'leaflet';
 import type { PageProps } from '../App';
 import { cardsPdf } from '../card/render';
 import { download, fileName, territoryKml } from '../geo/kml';
+import { s13Pdf, serviceYearOf } from '../card/s13';
 import { areaKm2, formatArea } from '../geo/core';
 import { useTask } from '../task';
 import { createMap, toLatLngs } from '../map';
@@ -53,6 +54,13 @@ export default function TerritoriesPage(props: PageProps) {
     download('Territory work log.csv', '﻿' + lines.join('\n'), 'text/csv');
   }
 
+  const thisYear = serviceYearOf(new Date().toISOString().slice(0, 10));
+  const years = [...new Set([thisYear, ...assignments.map((a) => serviceYearOf(a.assignedOn))])].sort((a, b) => b - a);
+  const [year, setYear] = useState(thisYear);
+  async function s13() {
+    download(`S-13 Territory Assignment Record ${year}.pdf`, await s13Pdf(territories, assignments, year), 'application/pdf');
+  }
+
   if (!territories.length)
     return (
       <div className="page narrow empty">
@@ -78,6 +86,16 @@ export default function TerritoriesPage(props: PageProps) {
         </div>
         <div className="toolbar">
           <input className="search" placeholder="Search number, locality or name" value={q} onChange={(e) => setQ(e.target.value)} />
+          <select value={year} onChange={(e) => setYear(+e.target.value)} aria-label="Service year" title="Service year (September to August)">
+            {years.map((y) => (
+              <option key={y} value={y}>
+                Service year {y}
+              </option>
+            ))}
+          </select>
+          <button className="btn ghost" onClick={s13} title="The Territory Assignment Record (S-13) for this service year, ready to print">
+            S-13 record (PDF)
+          </button>
           <button className="btn ghost" onClick={exportCsv}>
             Export log (CSV)
           </button>

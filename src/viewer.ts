@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import './viewer.css';
 import { decodeArea } from './geo/codec';
 import { download, gpxDocument, kmlDocument, placemark } from './geo/kml';
-import { ATTRIBUTION, TILE_URL } from './card/tiles';
+import { TILE_URL } from './card/tiles';
 
 const params = new URLSearchParams(location.hash.slice(1));
 const number = params.get('t') ?? '';
@@ -15,8 +15,8 @@ $('num').textContent = number ? `Territory ${number}` : 'Territory';
 $('name').textContent = locality;
 document.title = [number && `Territory ${number}`, locality].filter(Boolean).join(' – ') || 'Territory Map';
 
-const map = L.map('map', { zoomControl: true });
-L.tileLayer(TILE_URL, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(map);
+const map = L.map('map', { zoomControl: true, attributionControl: false });
+L.tileLayer(TILE_URL, { maxZoom: 19 }).addTo(map);
 
 try {
   const area = decodeArea(params.get('g') ?? '');

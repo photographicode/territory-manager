@@ -3,7 +3,7 @@
 import QRCode from 'qrcode';
 import { PDFDocument } from 'pdf-lib';
 import maplibregl from 'maplibre-gl';
-import { CARD_ATTRIBUTION, CARD_STYLE_URL } from './tiles';
+import { CARD_STYLE_URL } from './tiles';
 import { encodeArea } from '../geo/codec';
 import { shareOutline } from '../geo/core';
 import type { Area, Landmark, Settings, Territory } from '../types';
@@ -138,15 +138,6 @@ export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: num
   ctx.strokeStyle = '#a5281b';
   ctx.stroke();
 
-  const fs = Math.round(h / 45);
-  ctx.font = `${fs}px ${TEXT_FONT}`;
-  const tw = ctx.measureText(CARD_ATTRIBUTION).width;
-  ctx.fillStyle = 'rgba(255,255,255,0.8)';
-  ctx.fillRect(x0 + w - tw - fs, y0 + h - fs * 1.6, tw + fs, fs * 1.6);
-  ctx.fillStyle = '#333';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(CARD_ATTRIBUTION, x0 + w - fs / 2, y0 + h - fs * 0.8);
   ctx.restore();
   return project;
 }

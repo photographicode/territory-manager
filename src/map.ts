@@ -1,11 +1,11 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { ATTRIBUTION, TILE_URL } from './card/tiles';
+import { TILE_URL } from './card/tiles';
 import type { Area } from './types';
 
 export function createMap(el: HTMLElement) {
-  const map = L.map(el, { zoomSnap: 0.25 }).setView([10.0, 76.3], 11);
-  L.tileLayer(TILE_URL, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(map);
+  const map = L.map(el, { zoomSnap: 0.25, attributionControl: false }).setView([10.0, 76.3], 11);
+  L.tileLayer(TILE_URL, { maxZoom: 19 }).addTo(map);
   return map;
 }
 

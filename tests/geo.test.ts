@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { decodeArea, encodeArea } from '../src/geo/codec';
-import { mergeAreas, splitByLine } from '../src/geo/core';
-import type { Area, OsmData } from '../src/types';
+import { mergeAreas, refineAreas, splitByLine } from '../src/geo/core';
+import type { Area, Assignment, OsmData, Territory } from '../src/types';
+import { s13Rows, serviceYearOf } from '../src/card/s13';
 
 const square: Area = { type: 'Polygon', coordinates: [[[76.3, 9.88], [76.31, 9.88], [76.31, 9.89], [76.3, 9.89], [76.3, 9.88]]] };
 
@@ -124,5 +125,54 @@ describe('ponds', () => {
     const [a, b] = fillPondsInAreas([withPond, withLake]);
     expect((a as GeoJSON.Polygon).coordinates).toHaveLength(1);
     expect((b as GeoJSON.Polygon).coordinates).toHaveLength(2);
+  });
+});
+
+const bboxOf = (a: Area) => {
+  const pts = (a.type === 'Polygon' ? a.coordinates : a.coordinates.flat()).flat();
+  return [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
+};
+
+describe('snap to roads', () => {
+  it('moves a border drawn 22 m off a road onto the road, and keeps the outer edge', () => {
+    const rect = (w: number, e: number): Area => ({ type: 'Polygon', coordinates: [[[w, 9.88], [e, 9.88], [e, 9.89], [w, 9.89], [w, 9.88]]] });
+    const road = (coords: [number, number][]) => ({ level: 2, coords });
+    const osm = {
+      bbox: [76.29, 9.87, 76.32, 9.9],
+      fetchedAt: '',
+      water: [],
+      buildings: [],
+      places: [],
+      lines: [
+        road([[76.305, 9.87], [76.305, 9.9]]),
+        road([[76.3, 9.87], [76.3, 9.9]]),
+        road([[76.31, 9.87], [76.31, 9.9]]),
+        road([[76.29, 9.88], [76.32, 9.88]]),
+        road([[76.29, 9.89], [76.32, 9.89]]),
+      ],
+    } as OsmData;
+    const [a, b] = refineAreas([rect(76.3, 76.3048), rect(76.3048, 76.31)], osm);
+    expect(bboxOf(a)[2]).toBeCloseTo(76.305, 5);
+    expect(bboxOf(b)[0]).toBeCloseTo(76.305, 5);
+    expect(bboxOf(a)[0]).toBeCloseTo(76.3, 5);
+  });
+});
+
+describe('S-13 record', () => {
+  const t = (id: string, number: string) => ({ id, number, locality: '', geometry: square, buildings: 0 }) as Territory;
+  const a = (territoryId: string, assignedOn: string, completedOn?: string): Assignment => ({ id: assignedOn, territoryId, publisher: 'P ' + assignedOn, assignedOn, completedOn });
+  it('counts September as the start of the next service year', () => {
+    expect(serviceYearOf('2025-08-31')).toBe(2025);
+    expect(serviceYearOf('2025-09-01')).toBe(2026);
+  });
+  it('fills rows in number order, with the last completion before the year and four assignments a row', () => {
+    const log = [a('x', '2025-05-01', '2025-06-01'), ...['2025-09-10', '2025-10-10', '2025-11-10', '2025-12-10', '2026-01-10'].map((d) => a('x', d, d)), a('y', '2026-09-01')];
+    const rows = s13Rows([t('y', '10'), t('x', '2')], log, 2026);
+    expect(rows.map((r) => r.number)).toEqual(['2', '2', '10']);
+    expect(rows[0].last).toBe('2025-06-01');
+    expect(rows[0].slots).toHaveLength(4);
+    expect(rows[1].slots).toHaveLength(1);
+    expect(rows[1].last).toBe('');
+    expect(rows[2].slots).toHaveLength(0);
   });
 });

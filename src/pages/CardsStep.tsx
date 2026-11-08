@@ -182,7 +182,7 @@ export default function CardsStep({ project, update }: PageProps) {
         <div ref={preview} className="preview-box">
           <p className="muted">Rendering…</p>
         </div>
-        <p className="muted tiny">6 × 4 inch card at 300 dpi. Map © OpenStreetMap contributors, OpenFreeMap.</p>
+        <p className="muted tiny">6 × 4 inch card at 300 dpi.</p>
       </div>
     </div>
   );

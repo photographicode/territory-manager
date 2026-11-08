@@ -5,7 +5,6 @@ import { renderCard } from '../card/render';
 import { createMap, toLatLngs } from '../map';
 import { MAX_LANDMARKS, type Landmark } from '../types';
 import { byNumber } from './TerritoriesPage';
-import MyMapsLinks from './MyMapsLinks';
 
 const ll = ([lon, lat]: [number, number]): L.LatLngTuple => [lat, lon];
 const lonLat = (p: L.LatLng): [number, number] => [p.lng, p.lat];
@@ -88,7 +87,7 @@ export default function CardEditor({ project, update }: PageProps) {
     <div className="split-layout cards">
       <aside className="panel">
         <h2>Cards</h2>
-        <label className="field lm-pick">
+        <label className="field">
           <span>Territory</span>
           <select value={t.id} onChange={(e) => setCurrent(e.target.value)}>
             {ts.map((x) => (
@@ -122,7 +121,10 @@ export default function CardEditor({ project, update }: PageProps) {
         {!marks.length && <p className="muted">No landmarks on this card yet.</p>}
         {marks.length >= MAX_LANDMARKS && <p className="muted tiny">This card has the most landmarks it can hold.</p>}
         {marks.some((l) => !l.text.trim()) && <p className="warn">Boxes without a name are left off the printed card.</p>}
-        <MyMapsLinks project={project} update={update} />
+        <p className="muted tiny">
+          QR codes: {project.territories.filter((x) => x.mapUrl).length} of {project.territories.length} territories open their own Google My Maps map.
+          Paste a map's link on its page under Territories; the rest open the built-in map page.
+        </p>
       </aside>
       <div className="preview-pane">
         <div ref={mapEl} className="map lm-map" />

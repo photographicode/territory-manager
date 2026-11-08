@@ -104,9 +104,12 @@ export default function BoundaryStep({ project, update, go }: PageProps) {
               Use as congregation boundary
             </button>
             {shapes.length > 1 && (
-              <button className="btn" onClick={importAsTerritories}>
-                Import as existing territories
-              </button>
+              <>
+                <button className="btn" onClick={importAsTerritories}>
+                  Import as existing territories
+                </button>
+                <p className="muted tiny">Drawn by hand? In Review, press "Snap borders to roads" to move every border onto the nearest road.</p>
+              </>
             )}
             <button className="btn ghost" onClick={() => setShapes(null)}>
               Cancel
