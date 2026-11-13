@@ -218,3 +218,6 @@ textarea { resize: vertical; }
 .lm-row .field { flex: 1; }
 
 .panel > .field { flex: none; }
+.group-editor { display: flex; flex-direction: column; gap: 6px; }
+.group-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.group-row input[type=color] { width: 34px; height: 30px; padding: 0; border: 0; background: none; }

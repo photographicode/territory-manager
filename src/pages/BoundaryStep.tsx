@@ -6,12 +6,15 @@ import { mergeAreas, sweepOrder } from '../geo/core';
 import { createMap, toLatLngs } from '../map';
 import { uid } from '../types';
 import { useTask } from '../task';
+import type { Incoming } from '../handoff';
 
-export default function BoundaryStep({ project, update, go }: PageProps) {
+export default function BoundaryStep({ project, update, go, incoming }: PageProps & { incoming?: Incoming | null }) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map>();
   const layer = useRef<L.LayerGroup>();
   const [shapes, setShapes] = useState<ImportedShape[] | null>(null);
+  // Congregation named in a request opened from the dashboard; it is saved once the file is used.
+  const [fromRequest, setFromRequest] = useState('');
   const task = useTask();
 
   useEffect(() => {
@@ -27,7 +30,8 @@ export default function BoundaryStep({ project, update, go }: PageProps) {
     const polys = areas.map((a) =>
       L.polygon(toLatLngs(a) as L.LatLngExpression[][], { color: shapes ? '#2471a3' : '#a5281b', weight: 3, fillOpacity: 0.08 }).addTo(g),
     );
-    if (polys.length) map.current!.fitBounds(L.featureGroup(polys).getBounds(), { padding: [20, 20] });
+    // No animation: leaving this step mid-zoom made Leaflet fail on the removed map (_leaflet_pos).
+    if (polys.length) map.current!.fitBounds(L.featureGroup(polys).getBounds(), { padding: [20, 20], animate: false });
   }, [shapes, project.boundary]);
 
   async function onFile(f: File | undefined) {
@@ -39,11 +43,20 @@ export default function BoundaryStep({ project, update, go }: PageProps) {
     if (read) setShapes(read);
   }
 
+  useEffect(() => {
+    if (!incoming) return;
+    setFromRequest(incoming.congregation);
+    void onFile(incoming.file);
+  }, [incoming]); // eslint-disable-line react-hooks/exhaustive-deps -- onFile is recreated each render
+
+  /** Settings with the requesting congregation's name, when the file came from a request. */
+  const named = (settings: typeof project.settings) => (fromRequest ? { ...settings, congregation: fromRequest } : settings);
+
   function useAsBoundary() {
     if (!shapes) return;
     if (project.territories.length && !confirm('Replace the congregation boundary? Existing territories are kept until you split again.')) return;
     const geometry = shapes.length === 1 ? shapes[0].geometry : mergeAreas(shapes.map((s) => s.geometry));
-    update((p) => ({ ...p, boundary: { type: 'Feature', properties: {}, geometry } }), true);
+    update((p) => ({ ...p, settings: named(p.settings), boundary: { type: 'Feature', properties: {}, geometry } }), true);
     setShapes(null);
     go('split');
   }
@@ -55,6 +68,7 @@ export default function BoundaryStep({ project, update, go }: PageProps) {
     update(
       (p) => ({
         ...p,
+        settings: named(p.settings),
         boundary: p.boundary ?? { type: 'Feature', properties: {}, geometry: mergeAreas(shapes.map((s) => s.geometry)) },
         territories: ordered.map((s, i) => {
           const m = /^\s*(?:no\.?\s*)?(\d+[a-z]?)\b[\s.\-–:]*(.*)$/i.exec(s.name);
@@ -83,6 +97,12 @@ export default function BoundaryStep({ project, update, go }: PageProps) {
         <p className="muted">
           Import the KML or KMZ outline of the whole congregation territory. In Google My Maps use <b>⋮ → Export to KML/KMZ</b>.
         </p>
+        {fromRequest && shapes && (
+          <p className="warn">
+            Boundary from the request of <b>{fromRequest}</b>. Using it replaces the boundary of the project open here; download a Backup first if
+            you need that one.
+          </p>
+        )}
         <label className="file">
           <input type="file" accept=".kml,.kmz" onChange={(e) => onFile(e.target.files?.[0])} />
           <span className="btn primary">Choose KML / KMZ file</span>

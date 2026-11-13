@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { listenForHandoff, type Incoming } from './handoff';
 import { useProject, type ProjectApi } from './store';
 import type { Stage } from './types';
 import BoundaryStep from './pages/BoundaryStep';
@@ -6,6 +7,7 @@ import SplitStep from './pages/SplitStep';
 import ReviewStep from './pages/ReviewStep';
 import CardEditor from './pages/CardEditor';
 import CardsStep from './pages/CardsStep';
+import PosterStep from './pages/PosterStep';
 import TerritoriesPage from './pages/TerritoriesPage';
 import SettingsPage from './pages/SettingsPage';
 
@@ -16,6 +18,7 @@ const STEPS: { id: Stage; label: string }[] = [
   { id: 'review', label: 'Review' },
   { id: 'cards', label: 'Cards' },
   { id: 'print', label: 'Print' },
+  { id: 'poster', label: 'Full map' },
 ];
 const OTHER: { id: Stage; label: string }[] = [
   { id: 'territories', label: 'Territories' },
@@ -25,6 +28,16 @@ const OTHER: { id: Stage; label: string }[] = [
 export default function App() {
   const api = useProject();
   const [page, setPage] = useState<Stage | null>(null);
+  // A boundary file sent from the territory dashboard opens on the Boundary step.
+  const [incoming, setIncoming] = useState<Incoming | null>(null);
+  useEffect(
+    () =>
+      listenForHandoff((i) => {
+        setIncoming(i);
+        setPage('boundary');
+      }),
+    [],
+  );
   if (!api.project) return <div className="loading">Loading…</div>;
   const p = api.project;
   const current: Stage = page ?? (p.finalized ? 'territories' : p.territories.length ? 'review' : p.boundary ? 'split' : 'boundary');
@@ -51,11 +64,12 @@ export default function App() {
         </nav>
       </header>
       <main className="body">
-        {current === 'boundary' && <BoundaryStep {...props} />}
+        {current === 'boundary' && <BoundaryStep {...props} incoming={incoming} />}
         {current === 'split' && <SplitStep {...props} />}
         {current === 'review' && <ReviewStep {...props} />}
         {current === 'cards' && <CardEditor {...props} />}
         {current === 'print' && <CardsStep {...props} />}
+        {current === 'poster' && <PosterStep {...props} />}
         {current === 'territories' && <TerritoriesPage {...props} />}
         {current === 'backup' && <SettingsPage {...props} />}
       </main>

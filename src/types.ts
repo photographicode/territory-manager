@@ -1,4 +1,5 @@
 import type { Feature, MultiPolygon, Polygon } from 'geojson';
+import type { PosterOptions } from './card/poster';
 
 export type Area = Polygon | MultiPolygon;
 
@@ -86,10 +87,12 @@ export interface Settings {
   footerText: string;
   /** Public address of view.html for QR codes; empty means the site this app runs on. */
   viewerUrl: string;
+  /** Options for the full wall map; unset until first changed. */
+  poster?: PosterOptions;
 }
 
 /** Pages of the app: the five steps in order, then the everyday pages. */
-export type Stage = 'boundary' | 'split' | 'review' | 'cards' | 'print' | 'territories' | 'backup';
+export type Stage = 'boundary' | 'split' | 'review' | 'cards' | 'print' | 'poster' | 'territories' | 'backup';
 
 export interface Project {
   version: 1;
