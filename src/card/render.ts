@@ -2,11 +2,12 @@
 // complex scripts are shaped correctly before the card is placed into the PDF as an image.
 import QRCode from 'qrcode';
 import { PDFDocument } from 'pdf-lib';
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import { CARD_STYLE_URL } from './tiles';
 import { encodeArea } from '../geo/codec';
 import { shareOutline } from '../geo/core';
 import type { Area, Landmark, Settings, Territory } from '../types';
+import { safeUrl } from '../safe';
 
 export const CARD = { widthIn: 6, heightIn: 4, dpi: 300 };
 const W = CARD.widthIn * CARD.dpi;
@@ -19,11 +20,12 @@ const MAX_QR_CODE = 450;
 // Phones cannot open this computer's address, so cards made from the local copy point at the published one.
 const PUBLIC_VIEWER = 'https://photographicode.github.io/territory-manager/view.html';
 const isLocal = () => /^(localhost|127\.|\[::1\])/.test(location.hostname);
-export const viewerUrl = (s: Settings) => s.viewerUrl || (isLocal() ? PUBLIC_VIEWER : new URL('view.html', location.href).href);
+export const viewerUrl = (s: Settings) => safeUrl(s.viewerUrl) || (isLocal() ? PUBLIC_VIEWER : new URL('view.html', location.href).href);
 
 /** Link encoded in the QR code: the territory's own map link, or the viewer page with the outline. */
 export function qrLink(t: Territory, s: Settings): string {
-  if (t.mapUrl) return t.mapUrl;
+  // Only web links go into a printed QR code.
+  if (safeUrl(t.mapUrl)) return safeUrl(t.mapUrl);
   // Simplify only as much as needed to keep the QR code small enough to scan from a printed card.
   let tol = 0.000005;
   let code = encodeArea(shareOutline(t.geometry, tol));
@@ -53,7 +55,7 @@ function offscreenMap(cssW: number, cssH: number): Promise<maplibregl.Map> {
         interactive: false,
         attributionControl: false,
         pixelRatio: MAP_SCALE,
-        preserveDrawingBuffer: true,
+        canvasContextAttributes: { preserveDrawingBuffer: true },
         fadeDuration: 0,
         center: [76.3, 10],
         zoom: 12,
@@ -74,7 +76,7 @@ function offscreenMap(cssW: number, cssH: number): Promise<maplibregl.Map> {
         clearTimeout(timer);
         resolve(map);
       });
-      map.once('error', (e) => fail(e.error ?? new Error('The card map could not load')));
+      map.once('error', (e) => fail(new Error(e.error?.message || 'The card map could not load')));
     });
     mapPromise.catch(() => (mapPromise = null));
   }

@@ -2,9 +2,10 @@
 // so even 2A0 at 300 dpi never needs one giant canvas in memory.
 import QRCode from 'qrcode';
 import { PDFDocument } from 'pdf-lib';
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import { CARD_STYLE_URL } from './tiles';
 import { ensureFonts, qrLink } from './render';
+import { safeUrl } from '../safe';
 import { areasTouch, interiorPoint, mergeAreas } from '../geo/core';
 import type { Area, Settings, Territory } from '../types';
 
@@ -497,7 +498,7 @@ function drawOverlay(ctx: CanvasRenderingContext2D, L: Layout, opt: PosterOption
 
 /** Link opened by the poster's QR code. */
 export function posterLink(s: Settings, opt: PosterOptions, boundary: Area): string {
-  if (opt.link.trim()) return opt.link.trim();
+  if (safeUrl(opt.link)) return safeUrl(opt.link);
   return qrLink({ id: 'all', number: '', locality: s.congregation ? `${s.congregation} congregation` : 'All territories', geometry: boundary, buildings: 0 }, s);
 }
 
@@ -518,7 +519,7 @@ function backgroundMap(cssSize: number, ratio: number): Promise<{ map: maplibreg
     interactive: false,
     attributionControl: false,
     pixelRatio: ratio,
-    preserveDrawingBuffer: true,
+    canvasContextAttributes: { preserveDrawingBuffer: true },
     fadeDuration: 0,
     maxCanvasSize: [8192, 8192],
     center: [76.3, 10],

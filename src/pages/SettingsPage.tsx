@@ -3,6 +3,7 @@ import type { PageProps } from '../App';
 import { download } from '../geo/kml';
 import { newProject, type Project } from '../types';
 import { useTask } from '../task';
+import { backupProblem } from '../safe';
 
 export default function SettingsPage({ project, replace }: PageProps) {
   const [msg, setMsg] = useState('');
@@ -17,7 +18,9 @@ export default function SettingsPage({ project, replace }: PageProps) {
     if (!f) return;
     const data = await task.run('Reading the backup', async () => {
       const d = JSON.parse(await f.text()) as Project;
-      if (d.version !== 1 || !Array.isArray(d.territories)) throw new Error('This is not a Territory Manager backup');
+      // Check everything before anything is replaced, so a damaged file cannot break the project.
+      const problem = backupProblem(d);
+      if (problem) throw new Error(problem);
       return d;
     });
     if (!data) return;

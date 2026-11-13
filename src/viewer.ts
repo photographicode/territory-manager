@@ -10,6 +10,8 @@ import { TILE_URL } from './card/tiles';
 const params = new URLSearchParams(location.hash.slice(1));
 const number = params.get('t') ?? '';
 const locality = params.get('n') ?? '';
+// The number comes from the link; keep only characters that are safe in a file name.
+const safeName = number.replace(/[^\p{L}\p{N}._-]+/gu, '-').slice(0, 40);
 const $ = (id: string) => document.getElementById(id)!;
 $('num').textContent = number ? `Territory ${number}` : 'Territory';
 $('name').textContent = locality;
@@ -29,8 +31,8 @@ try {
   ($('gmaps') as HTMLAnchorElement).href = `https://www.google.com/maps/dir/?api=1&destination=${ll}`;
   ($('amaps') as HTMLAnchorElement).href = `https://maps.apple.com/?daddr=${ll}&q=${encodeURIComponent(document.title)}`;
   $('kml').onclick = () =>
-    download(`territory-${number || 'map'}.kml`, kmlDocument(document.title, [placemark(document.title, area)]), 'application/vnd.google-earth.kml+xml');
-  $('gpx').onclick = () => download(`territory-${number || 'map'}.gpx`, gpxDocument(document.title, area), 'application/gpx+xml');
+    download(`territory-${safeName || 'map'}.kml`, kmlDocument(document.title, [placemark(document.title, area)]), 'application/vnd.google-earth.kml+xml');
+  $('gpx').onclick = () => download(`territory-${safeName || 'map'}.gpx`, gpxDocument(document.title, area), 'application/gpx+xml');
 } catch {
   map.setView([10, 76.3], 9);
   $('name').textContent = 'This link is incomplete. Please scan the card again.';

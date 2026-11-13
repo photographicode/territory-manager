@@ -3,6 +3,10 @@ import { unzipSync, strFromU8, strToU8, zipSync } from 'fflate';
 import type { Feature } from 'geojson';
 import type { Area, Territory } from '../types';
 import { shareOutline } from './core';
+import { csvCell } from '../safe';
+
+/** Largest KML/KMZ accepted, and the largest KML a KMZ may unpack to (guards against zip bombs). */
+const MAX_FILE = 50 * 1024 * 1024;
 
 export interface ImportedShape {
   name: string;
@@ -12,8 +16,18 @@ export interface ImportedShape {
 /** Read polygons from a .kml or .kmz file (e.g. exported from Google My Maps). */
 export async function readKml(file: File): Promise<ImportedShape[]> {
   let text: string;
+  if (file.size > MAX_FILE) throw new Error('This file is over 50 MB. Export only the congregation boundary and try again.');
   if (file.name.toLowerCase().endsWith('.kmz')) {
-    const files = unzipSync(new Uint8Array(await file.arrayBuffer()));
+    // Unpack only KML entries, and only ones that unpack to a sane size.
+    let tooBig = false;
+    const files = unzipSync(new Uint8Array(await file.arrayBuffer()), {
+      filter: (f) => {
+        if (!/[.]kml$/i.test(f.name)) return false;
+        if (f.originalSize > MAX_FILE) tooBig = true;
+        return !tooBig;
+      },
+    });
+    if (tooBig) throw new Error('The KML inside this KMZ is over 50 MB, so it was not opened.');
     const name = Object.keys(files).find((n) => n.toLowerCase().endsWith('.kml'));
     if (!name) throw new Error('No KML found inside the KMZ file');
     text = strFromU8(files[name]);
@@ -121,7 +135,7 @@ const MAX_WKT = 40000;
  * Name for the titles). Other columns become each territory's details.
  */
 export function territoriesCsv(ts: Territory[]): string {
-  const cell = (v: string | number) => (/[",\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  const cell = csvCell;
   const rows = [['Name', 'Number', 'Locality', 'Approx houses', 'Description', 'Notes', 'WKT']];
   for (const t of ts) {
     // Use the full outline if it fits in a cell, else simplify just enough.

@@ -3,7 +3,8 @@
 export const READY = 'tm-generator-ready';
 export const IMPORT = 'tm-import';
 const MAX_BYTES = 8 * 1024 * 1024;
-const TRUSTED = ['https://territory.congregationassistant.com', 'https://congregationassistant.com'];
+// Only the territory owner dashboard may send files.
+const TRUSTED = ['https://territory.congregationassistant.com'];
 // Local development of both apps runs on different localhost ports.
 const trusted = (origin: string) => origin === globalThis.location?.origin || TRUSTED.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
 

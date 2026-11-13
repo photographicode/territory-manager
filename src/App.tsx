@@ -3,7 +3,8 @@ import { listenForHandoff, type Incoming } from './handoff';
 import { useProject, type ProjectApi } from './store';
 import type { Stage } from './types';
 import { Icon, type IconName } from './icons';
-import { completion, startPage, stepState, STEPS } from './progress';
+import { blockedBy, completion, startPage, stepState, STEPS, type StepId } from './progress';
+import StepFrame from './StepFrame';
 import Dashboard from './pages/Dashboard';
 import BoundaryStep from './pages/BoundaryStep';
 import SplitStep from './pages/SplitStep';
@@ -37,6 +38,7 @@ export default function App() {
   const current: Stage = page ?? startPage(p);
   const props = { ...(api as ProjectApi), go: setPage };
   const done = Math.round(completion(p) * 100);
+  const step = STEPS.find((s) => s.id === current)?.id as StepId | undefined;
   return (
     <div className="app">
       <aside className="side">
@@ -61,7 +63,7 @@ export default function App() {
             <div style={{ width: `${done}%` }} />
           </div>
           {STEPS.map((s, i) => {
-            const state = stepState(s.id, p);
+            const state = blockedBy(s.id, p) ? 'blocked' : stepState(s.id, p);
             return (
               <button key={s.id} className={`step ${state}${s.id === current ? ' on' : ''}`} aria-current={s.id === current ? 'step' : undefined} onClick={() => setPage(s.id)}>
                 <span className="step-dot">{state === 'done' ? <Icon name="check" size={14} /> : i + 1}</span>
@@ -83,12 +85,16 @@ export default function App() {
       </aside>
       <main className="body">
         {current === 'dashboard' && <Dashboard {...props} />}
-        {current === 'boundary' && <BoundaryStep {...props} incoming={incoming} />}
-        {current === 'split' && <SplitStep {...props} />}
-        {current === 'review' && <ReviewStep {...props} />}
-        {current === 'cards' && <CardEditor {...props} />}
-        {current === 'print' && <CardsStep {...props} />}
-        {current === 'poster' && <PosterStep {...props} />}
+        {step && (
+          <StepFrame key={step} step={step} project={p} go={setPage}>
+            {step === 'boundary' && <BoundaryStep {...props} incoming={incoming} />}
+            {step === 'split' && <SplitStep {...props} />}
+            {step === 'review' && <ReviewStep {...props} />}
+            {step === 'cards' && <CardEditor {...props} />}
+            {step === 'print' && <CardsStep {...props} />}
+            {step === 'poster' && <PosterStep {...props} />}
+          </StepFrame>
+        )}
         {current === 'territories' && <TerritoriesPage {...props} />}
         {current === 'backup' && <SettingsPage {...props} />}
       </main>

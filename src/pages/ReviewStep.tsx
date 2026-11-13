@@ -29,6 +29,8 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
   const [osm, setOsm] = useState<OsmData | null>(null);
   const [filter, setFilter] = useState('');
   const [lang, setLang] = useState('en');
+  // Problems are shown in the panel, not in blocking pop-ups.
+  const [notice, setNotice] = useState('');
   const { territories, settings } = project;
   const task = useTask();
   const index = useMemo(() => (osm ? new BuildingIndex(osm.buildings) : null), [osm]);
@@ -60,7 +62,8 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
     layers.current.clear();
     territories.forEach((t, i) => {
       const poly = L.polygon(toLatLngs(t.geometry) as L.LatLngExpression[][], { color: colorFor(i), weight: 2, fillOpacity: 0.18 });
-      poly.bindTooltip(t.number || '?', { permanent: true, direction: 'center', className: 'tlabel' });
+      // A text node, so a number from an imported file is never read as HTML.
+      poly.bindTooltip(document.createTextNode(t.number || '?') as unknown as HTMLElement, { permanent: true, direction: 'center', className: 'tlabel' });
       poly.on('click', (e: L.LeafletMouseEvent) => {
         if (live.current.mode !== 'select') return;
         const multi = e.originalEvent.shiftKey || e.originalEvent.ctrlKey || e.originalEvent.metaKey;
@@ -134,7 +137,8 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
     }
     setMode('select');
     map.current!.pm.disableDraw();
-    if (!changed) return alert('The line must cross the territory completely, from one edge to another.');
+    if (!changed) return setNotice('The cut line must cross the territory completely, from one edge to the other. Draw it again a little longer.');
+    setNotice('');
     update((p) => ({ ...p, territories: numbered(result) }), true);
   }
 
@@ -218,7 +222,8 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
   }
 
   function suggestNames(onlyEmpty: boolean) {
-    if (!osm?.places?.length) return alert('No place names in the downloaded map data. Download map data again on the Split step.');
+    if (!osm?.places?.length) return setNotice('No place names in the downloaded map data. Download the map data again on the Split step, then come back.');
+    setNotice('');
     update(
       (p) => ({
         ...p,
@@ -255,6 +260,11 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
   return (
     <div className="split-layout review">
       <aside className="panel">
+        {notice && (
+          <p className="hint" role="status">
+            {notice}
+          </p>
+        )}
         <div className="toolbar">
           <button className="btn" disabled={mode !== 'select' || sel.length < 2} onClick={merge} title="Join the selected territories into one">
             Merge ({sel.length})
