@@ -92,7 +92,7 @@ export interface Settings {
 }
 
 /** Pages of the app: the five steps in order, then the everyday pages. */
-export type Stage = 'boundary' | 'split' | 'review' | 'cards' | 'print' | 'poster' | 'territories' | 'backup';
+export type Stage = 'dashboard' | 'boundary' | 'split' | 'review' | 'cards' | 'print' | 'poster' | 'territories' | 'backup';
 
 export interface Project {
   version: 1;
