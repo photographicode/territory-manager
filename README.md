@@ -1,5 +1,9 @@
 # Territory Manager
 
+![Territory Manager screenshot](docs/screenshot.png)
+
+**Live:** https://photographicode.github.io/territory-manager/
+
 Makes congregation territory cards from one boundary KML, and keeps the record of who has each territory.
 Standalone for now (React + Vite + TypeScript, same stack as congregation-assistant) so it can be moved in later.
 
