@@ -6,7 +6,7 @@ import type { PageProps } from '../App';
 import { areasTouch, BuildingIndex, countBuildings, fillPondsInAreas, mergeAreas, splitByLine, suggestLocality, sweepOrder } from '../geo/core';
 import { loadOsm, saveOsm } from '../store';
 import { fetchOsm } from '../geo/osm';
-import type { RefineOut } from '../geo/refine.worker';
+import { snapToLines, snapToNeighbours } from '../geo/snap';
 import { bboxOf, colorFor, createMap, toLatLngs } from '../map';
 import { uid, type Area, type OsmData, type Territory } from '../types';
 import { useTask } from '../task';
@@ -32,6 +32,7 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
   const [lang, setLang] = useState('en');
   // Problems are shown in the panel, not in blocking pop-ups.
   const [notice, setNotice] = useState('');
+  const [numberLog, setNumberLog] = useState<string[]>([]);
   const { territories, settings } = project;
   const task = useTask();
   const index = useMemo(() => (osm ? new BuildingIndex(osm.buildings) : null), [osm]);
@@ -169,7 +170,15 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
     update((p) => ({ ...p, territories: numbered(p.territories.filter((t) => !selected.includes(t.id))) }), true);
   }
 
-  /** Move every outline onto the nearest roads (for territories drawn by hand or imported from KML). */
+  /** Close small gaps and slivers between neighbouring territories, so their borders meet exactly. */
+  function snapNeighbours() {
+    const out = snapToNeighbours(territories.map((t) => t.geometry));
+    const byId = new Map(territories.map((t, i) => [t.id, out[i]]));
+    update((p) => ({ ...p, territories: p.territories.map((t) => (byId.has(t.id) ? { ...t, geometry: byId.get(t.id)! } : t)) }), true);
+    setNotice('Neighbouring borders within 10 m now meet exactly. Undo puts them back.');
+  }
+
+  /** Put the stretches of border that run along a road (within 15 m) exactly on it; the rest stays where it is. */
   async function snapToRoads() {
     const areas = territories.map((t) => t.geometry);
     const boxes = areas.map(bboxOf);
@@ -189,17 +198,8 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
           setOsm(data);
         }
         const roads = data;
-        const out = await new Promise<Area[]>((ok, bad) => {
-          const w = new Worker(new URL('../geo/refine.worker.ts', import.meta.url), { type: 'module' });
-          signal.addEventListener('abort', () => (w.terminate(), bad(new DOMException('Cancelled', 'AbortError'))), { once: true });
-          w.onmessage = (e: MessageEvent<RefineOut>) => {
-            const m = e.data;
-            if (m.type === 'progress') report(m.detail, 0.4 + 0.6 * m.fraction);
-            else (w.terminate(), m.type === 'done' ? ok(m.areas) : bad(new Error(m.msg)));
-          };
-          w.onerror = (e) => (w.terminate(), bad(new Error(e.message || 'The road snapping stopped')));
-          w.postMessage({ areas, osm: roads });
-        });
+        report('Moving borders that run along a road onto it', 0.6);
+        const out = snapToLines(areas, roads.lines.map((l) => l.coords as [number, number][]));
         const index = new BuildingIndex(roads.buildings);
         return out.map((g) => ({ g, n: countBuildings(index, g) }));
       },
@@ -217,8 +217,11 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
   // Names like "House to House 12" carry the number; this puts every territory back on its name's number.
   function numberFromNames() {
     const r = numbersFromNames(territories);
-    if ('problem' in r) return alert(`Cannot number from names. ${r.problem}`);
-    update((p) => ({ ...p, territories: p.territories.map((t) => ({ ...t, number: r.numbers.get(t.id) ?? t.number })) }), true);
+    update(
+      (p) => ({ ...p, territories: p.territories.map((t) => ({ ...t, number: r.numbers.get(t.id) ?? t.number, locality: r.names.get(t.id) ?? t.locality })) }),
+      true,
+    );
+    setNumberLog(r.log.length ? r.log : ['Every territory now has the number from its name.']);
   }
 
   /** Give a territory a new number; the territory that had that number takes the old one. */
@@ -329,15 +332,33 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
           {toCheck > 0 && <span className="warn"> · {toCheck} with straight cuts to check</span>}
           {dupNumbers.size > 0 && <span className="warn"> · duplicate numbers: {[...dupNumbers].join(', ')}</span>}
         </div>
+        <div className="toolbar">
+          <button className="btn primary" onClick={numberFromNames} title="Give each territory the number at the end of its locality name, e.g. House to House 12 becomes 12">
+            Number from names
+          </button>
+        </div>
+        {numberLog.length > 0 && (
+          <div className="card-box number-log" aria-live="polite">
+            <b>Number from names</b>
+            <ul className="tiny">
+              {numberLog.map((l, i) => (
+                <li key={i}>{l}</li>
+              ))}
+            </ul>
+            <button className="btn ghost" onClick={() => setNumberLog([])}>
+              Close
+            </button>
+          </div>
+        )}
         <div className="toolbar small">
-          <button className="btn ghost" disabled={task.busy} onClick={snapToRoads} title="Move hand-drawn or imported borders onto the nearest roads; Undo puts them back">
+          <button className="btn ghost" disabled={task.busy} onClick={snapToRoads} title="Put the parts of borders that run along a road (within 15 m) exactly on it; nothing else moves. Undo puts them back">
             Snap borders to roads
+          </button>
+          <button className="btn ghost" disabled={task.busy} onClick={snapNeighbours} title="Make neighbouring borders that almost meet (within 10 m) meet exactly, closing small gaps. Undo puts them back">
+            Snap to neighbours
           </button>
           <button className="btn ghost" onClick={renumber} title="Number the territories 1, 2, 3 … from the top of the map to the bottom">
             Renumber top to bottom
-          </button>
-          <button className="btn ghost" onClick={numberFromNames} title="Give each territory the number at the end of its locality name, e.g. House to House 12 becomes 12">
-            Number from names
           </button>
           <button
             className="btn ghost"
