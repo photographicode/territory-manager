@@ -89,8 +89,11 @@ function rings(a: Area): number[][][] {
 
 type Project = (lonLat: [number, number]) => [number, number];
 
+/** Share of the card map kept clear around the territory; wider with landmarks so their boxes fit beside the outline. */
+export const mapMargin = (t: Territory) => (t.landmarks?.some((l) => l.text.trim()) ? 0.2 : 0.08);
+
 /** Render an OpenStreetMap background with the territory outline into a w×h region; returns lon/lat → canvas pixels. */
-export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: number, y0: number, w: number, h: number): Promise<Project> {
+export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: number, y0: number, w: number, h: number, margin = 0.08): Promise<Project> {
   const cssW = Math.round(w / MAP_SCALE);
   const cssH = Math.round(h / MAP_SCALE);
   const map = await offscreenMap(cssW, cssH);
@@ -102,7 +105,7 @@ export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: num
       [Math.min(...lons), Math.min(...lats)],
       [Math.max(...lons), Math.max(...lats)],
     ],
-    { padding: { top: cssH * 0.08, bottom: cssH * 0.08, left: cssW * 0.08, right: cssW * 0.08 }, maxZoom: 18, animate: false },
+    { padding: { top: cssH * margin, bottom: cssH * margin, left: cssW * margin, right: cssW * margin }, maxZoom: 18, animate: false },
   );
   // Wait until every tile and label is drawn (or give up after 25 s and use what is there).
   await new Promise<void>((resolve) => {
@@ -281,7 +284,7 @@ export async function renderCard(t: Territory, s: Settings): Promise<HTMLCanvasE
 
   // Map and QR
   const map = { x: 60, y: 255, w: 1190, h: 690 };
-  const project = await drawMap(ctx, t.geometry, map.x, map.y, map.w, map.h);
+  const project = await drawMap(ctx, t.geometry, map.x, map.y, map.w, map.h, mapMargin(t));
   if (t.landmarks?.length) drawLandmarks(ctx, t.landmarks, project, map);
   ctx.lineWidth = 2;
   ctx.strokeStyle = '#555';

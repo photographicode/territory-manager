@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import type { PageProps } from '../App';
-import { renderCard } from '../card/render';
+import { mapMargin, renderCard } from '../card/render';
 import { createMap, toLatLngs } from '../map';
 import { MAX_LANDMARKS, type Landmark } from '../types';
 import { byNumber } from './TerritoriesPage';
@@ -30,7 +30,7 @@ export default function CardEditor({ project, update }: PageProps) {
     const m = createMap(mapEl.current!);
     const poly = L.polygon(toLatLngs(t.geometry) as L.LatLngExpression[][], { color: '#a5281b', weight: 3, fillOpacity: 0.2, interactive: false }).addTo(m);
     const size = m.getSize();
-    m.fitBounds(poly.getBounds(), { padding: [size.x * 0.08, size.y * 0.08] }); // same margin as the card map
+    m.fitBounds(poly.getBounds(), { padding: [size.x * mapMargin(t), size.y * mapMargin(t)] }); // same margin as the card map
     m.on('click', (e: L.LeafletMouseEvent) => {
       if (latest.current.marks.length >= MAX_LANDMARKS) return;
       // Start the box a little outward from the middle of the territory, off the spot itself.
