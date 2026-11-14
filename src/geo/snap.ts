@@ -85,20 +85,41 @@ function snapRing(ring: XY[], index: SegmentIndex, lines: Line[], reach: number,
   const pts = ring.slice(0, -1);
   const hits = pts.map((p) => index.nearest(p, kx, reach, skip));
   const out: XY[] = [];
+  const m = (a: XY, b: XY) => Math.hypot((a[0] - b[0]) * kx, (a[1] - b[1]) * KY);
+  // Metres from q to the straight piece a–b.
+  const off = (q: XY, a: XY, b: XY) => {
+    const dx = (b[0] - a[0]) * kx;
+    const dy = (b[1] - a[1]) * KY;
+    const t = Math.max(0, Math.min(1, ((q[0] - a[0]) * kx * dx + (q[1] - a[1]) * KY * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot((q[0] - a[0]) * kx - t * dx, (q[1] - a[1]) * KY - t * dy);
+  };
   pts.forEach((p, i) => {
     const h = hits[i];
     out.push(h ? h.p : p);
     const j = (i + 1) % pts.length;
     const h2 = hits[j];
-    if (h && h2 && h.line === h2.line) {
-      const via = between(lines[h.line], h, h2, kx);
-      const direct = Math.hypot((pts[j][0] - p[0]) * kx, (pts[j][1] - p[1]) * KY);
+    if (h && h2 && h.line === h2.line && m(h.p, h2.p) > 0.05) {
+      // Only the line's corners that the straight piece does not already pass through: running twice adds nothing.
+      const via = between(lines[h.line], h, h2, kx).filter((q) => off(q, h.p, h2.p) > 0.05);
+      const direct = m(pts[j], p);
       // Follow the line only where the border really runs along it, not round a bend far away.
-      if (pathLength([h.p, ...via, h2.p], kx) <= direct * 1.6 + reach) out.push(...via);
+      if (via.length && pathLength([h.p, ...via, h2.p], kx) <= direct * 1.6 + reach) out.push(...via);
     }
   });
-  const dedup = out.filter((p, i) => i === 0 || p[0] !== out[i - 1][0] || p[1] !== out[i - 1][1]);
-  return dedup.length < 3 ? ring : [...dedup, dedup[0]];
+  // Drop points closer than 5 cm to the one before, and spikes that go out and straight back.
+  const tidy: XY[] = [];
+  for (const q of out) {
+    if (tidy.length && m(q, tidy[tidy.length - 1]) < 0.05) continue;
+    if (tidy.length > 1 && m(q, tidy[tidy.length - 2]) < 0.05) {
+      tidy.pop();
+      continue;
+    }
+    tidy.push(q);
+  }
+  while (tidy.length > 2 && m(tidy[0], tidy[tidy.length - 1]) < 0.05) tidy.pop();
+  // Safety: a border never ends up with many times its points; if it would, keep it as it was.
+  if (tidy.length < 3 || tidy.length > pts.length * 4 + 200) return ring;
+  return [...tidy, tidy[0]];
 }
 
 const cellFor = (reach: number) => (reach / 111000) * 4;

@@ -31,6 +31,16 @@ describe('snapping', () => {
     expect(Math.min(...ring(ra).map((p) => p[0]))).toBeCloseTo(77.43 - D, 9);
   });
 
+  it('does not add points when run again', () => {
+    const tri: Area = { type: 'Polygon', coordinates: [[[77.44 + D, 8.17], [77.45, 8.175], [77.44 + D, 8.18], [77.44 + D, 8.17]]] };
+    const zig: Area = { type: 'Polygon', coordinates: [[[77.43, 8.17], [77.44, 8.17], [77.4401, 8.172], [77.44, 8.174], [77.4401, 8.176], [77.44, 8.18], [77.43, 8.18], [77.43, 8.17]]] };
+    const once = snapToNeighbours([zig, tri]);
+    let again = once;
+    for (let i = 0; i < 4; i++) again = snapToNeighbours(again);
+    expect(ring(again[0]).length).toBeLessThanOrEqual(ring(once[0]).length + 2);
+    expect(ring(again[1]).length).toBeLessThanOrEqual(ring(once[1]).length + 2);
+  });
+
   it('leaves far-apart territories alone', () => {
     const a = sq(77.43, 8.17, 77.44, 8.18);
     const [ra] = snapToNeighbours([a, sq(77.46, 8.17, 77.47, 8.18)]);
