@@ -45,7 +45,20 @@ function polygonsOf(g: G): G[] {
 
 /** Repair self-intersections (e.g. from a hand-drawn KML) without changing the shape. */
 export function clean(g: G): G {
-  return g.isValid() ? g : g.buffer(0);
+  if (g.isValid()) return g;
+  const fixed = g.buffer(0);
+  if (!fixed.isEmpty()) return fixed;
+  // buffer(0) can wipe out an outline that crosses itself (seen in imported KML); rebuild it from its edges.
+  try {
+    const noded = new GeometryNoder(PM).node(list([g.getBoundary()]));
+    const pz = new Polygonizer();
+    pz.add(list(uniqueSegments(noded.toArray())));
+    const faces: G[] = pz.getPolygons().toArray();
+    if (faces.length) return union(faces);
+  } catch {
+    // fall through: an empty shape is safer than a crash
+  }
+  return fixed;
 }
 
 const list = (items: G[]) => {
@@ -1496,6 +1509,7 @@ export function suggestLocality(area: Area, places: OsmData['places'], lang: str
 export const POND_MAX_M2 = 100_000; // 10 ha
 
 function areaM2(g: G): number {
+  if (g.isEmpty()) return 0;
   const lat = g.getEnvelopeInternal().centre().y;
   return g.getArea() * 111_320 * 111_320 * Math.cos((lat * Math.PI) / 180);
 }
