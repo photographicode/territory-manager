@@ -11,6 +11,7 @@ const NEXT_COPY: Record<StepId, { title: string; text: string; action: string }>
   split: { title: 'Split into territories', text: 'Roads, railways and water are downloaded from OpenStreetMap and used as territory borders.', action: 'Split now' },
   review: { title: 'Review the territories', text: 'Merge, cut and renumber until every territory is right, then confirm the review.', action: 'Open review' },
   cards: { title: 'Name every territory', text: 'Give each territory its locality name and add landmarks for the printed cards.', action: 'Open cards' },
+  links: { title: 'Add Google My Maps links', text: 'Optional: give each card a Google My Maps link so its QR code opens that map.', action: 'Open QR links' },
   print: { title: 'Print the territory cards', text: 'Everything is ready. Print the cards, or make the full wall map.', action: 'Print cards' },
   poster: { title: 'Make the full map', text: 'One wall map with every territory, up to 2A0 at 300 dpi.', action: 'Open full map' },
 };

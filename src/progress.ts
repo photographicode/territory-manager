@@ -1,7 +1,7 @@
 // How far a project is: which making steps are finished and which one comes next.
 import type { Project, Stage } from './types';
 
-export type StepId = 'boundary' | 'split' | 'review' | 'cards' | 'print' | 'poster';
+export type StepId = 'boundary' | 'split' | 'review' | 'cards' | 'links' | 'print' | 'poster';
 export type StepState = 'done' | 'next' | 'todo';
 
 export const STEPS: { id: StepId; label: string; hint: string; guide: string }[] = [
@@ -9,6 +9,7 @@ export const STEPS: { id: StepId; label: string; hint: string; guide: string }[]
   { id: 'split', label: 'Split', hint: 'Divide it into territories', guide: 'Download roads and buildings, choose how many territories or houses each, then split.' },
   { id: 'review', label: 'Review', hint: 'Check, merge and number', guide: 'Merge, cut or adjust territories until each is right, renumber, then press Finish review.' },
   { id: 'cards', label: 'Cards', hint: 'Names and landmarks', guide: 'Give every territory its locality name and add landmark boxes where they help.' },
+  { id: 'links', label: 'QR links', hint: 'Google My Maps links', guide: 'Once names and borders are final, give each card a Google My Maps link; its QR code then opens that map.' },
   { id: 'print', label: 'Print', hint: 'Territory card PDFs', guide: 'Set the card text and download the PDF of all cards.' },
   { id: 'poster', label: 'Full map', hint: 'Wall map, up to 2A0', guide: 'Choose colours, groups and paper size, then download the wall map PDF.' },
 ];
@@ -26,6 +27,9 @@ export function isDone(id: StepId, p: Project): boolean {
       return p.finalized;
     case 'cards':
       return p.finalized && named;
+    case 'links':
+      // Optional: cards without a link keep the built-in map page.
+      return p.territories.length > 0 && p.territories.every((t) => /^https?:\/\//.test(t.mapUrl ?? ''));
     case 'print':
     case 'poster':
       return false;
@@ -33,7 +37,7 @@ export function isDone(id: StepId, p: Project): boolean {
 }
 
 /** Each step needs the one before it, so the work is done in order. Printing needs named, reviewed territories. */
-const REQUIRES: Record<StepId, StepId | null> = { boundary: null, split: 'boundary', review: 'split', cards: 'review', print: 'cards', poster: 'cards' };
+const REQUIRES: Record<StepId, StepId | null> = { boundary: null, split: 'boundary', review: 'split', cards: 'review', links: 'cards', print: 'cards', poster: 'cards' };
 
 /** The earliest unfinished step that `id` depends on, or null when `id` can be worked on now. */
 export function blockedBy(id: StepId, p: Project): StepId | null {
@@ -54,6 +58,7 @@ export function todo(id: StepId, p: Project): string {
       return 'Check every territory, then press "Finish review".';
     case 'cards':
       return p.finalized ? `${unnamed} ${unnamed === 1 ? 'territory still needs' : 'territories still need'} a locality name.` : 'Finish the review first.';
+    case 'links':
     case 'print':
     case 'poster':
       return '';
@@ -62,7 +67,7 @@ export function todo(id: StepId, p: Project): string {
 
 /** The first unfinished step, or 'print' once everything that can be checked is done. */
 export function nextStep(p: Project): StepId {
-  return STEPS.find((s) => s.id !== 'print' && s.id !== 'poster' && !isDone(s.id, p))?.id ?? 'print';
+  return STEPS.find((s) => s.id !== 'links' && s.id !== 'print' && s.id !== 'poster' && !isDone(s.id, p))?.id ?? 'print';
 }
 
 export function stepState(id: StepId, p: Project): StepState {

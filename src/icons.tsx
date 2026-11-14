@@ -5,6 +5,7 @@ const PATHS = {
   split: 'M6 3v18M18 3v18M6 12h12M12 3v9',
   review: 'M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',
   cards: 'M3 6h18v12H3zM7 10h6M7 14h4M16 10h2v4h-2z',
+  links: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h3v3h-3zM18 18h3v3h-3zM6 6h1v1H6zM17 6h1v1h-1zM6 17h1v1H6z',
   print: 'M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z',
   poster: 'M4 3h16v18H4zM8 7h8M8 11l3 3 2-2 3 3',
   territories: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',

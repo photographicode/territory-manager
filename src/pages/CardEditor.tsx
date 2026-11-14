@@ -123,7 +123,7 @@ export default function CardEditor({ project, update }: PageProps) {
         {marks.some((l) => !l.text.trim()) && <p className="warn">Boxes without a name are left off the printed card.</p>}
         <p className="muted tiny">
           QR codes: {project.territories.filter((x) => x.mapUrl).length} of {project.territories.length} territories open their own Google My Maps map.
-          Paste a map's link on its page under Territories; the rest open the built-in map page.
+          Add the links in the next step, QR links; the rest open the built-in map page.
         </p>
       </aside>
       <div className="preview-pane">

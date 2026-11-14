@@ -11,6 +11,7 @@ import SplitStep from './pages/SplitStep';
 import ReviewStep from './pages/ReviewStep';
 import CardEditor from './pages/CardEditor';
 import CardsStep from './pages/CardsStep';
+import LinksStep from './pages/LinksStep';
 import PosterStep from './pages/PosterStep';
 import TerritoriesPage from './pages/TerritoriesPage';
 import SettingsPage from './pages/SettingsPage';
@@ -91,6 +92,7 @@ export default function App() {
             {step === 'split' && <SplitStep {...props} />}
             {step === 'review' && <ReviewStep {...props} />}
             {step === 'cards' && <CardEditor {...props} />}
+            {step === 'links' && <LinksStep {...props} />}
             {step === 'print' && <CardsStep {...props} />}
             {step === 'poster' && <PosterStep {...props} />}
           </StepFrame>

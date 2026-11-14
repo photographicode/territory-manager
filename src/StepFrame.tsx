@@ -12,8 +12,8 @@ export default function StepFrame({ step, project, go, children }: { step: StepI
   const next = STEPS[i + 1];
   const lock = blockedBy(step, project);
   const done = isDone(step, project);
-  // Printing leaves no record, so its Next is always open.
-  const canGoOn = done || step === 'print' || step === 'poster';
+  // QR links are optional and printing leaves no record, so their Next is always open.
+  const canGoOn = done || step === 'links' || step === 'print' || step === 'poster';
   const left = canGoOn ? '' : todo(step, project);
   return (
     <div className="frame">
