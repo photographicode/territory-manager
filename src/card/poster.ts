@@ -123,6 +123,8 @@ const EARTH_M = 40075016.686;
 const TEXT_FONT = '"Noto Sans", "Noto Sans Malayalam", sans-serif';
 const TITLE_FONT = '"Noto Serif", "Noto Sans Malayalam", serif';
 const RIBBON = '#2563ae';
+const BADGE_FILL = '#cfe0e8';
+const BADGE_RING = '#1f4e5a';
 // Soft colours like a printed street map; neighbours never share one.
 const PALETTE = ['#f4a261', '#9b7fd1', '#5fb3b3', '#f2d16b', '#e07a9f', '#6c8fd6', '#8cc084', '#b5838d', '#e9c46a', '#78b7d0', '#c9a0dc', '#a3a380'];
 
@@ -178,7 +180,7 @@ export interface Layout {
   zoom: number;
   /** Device pixels per CSS pixel of the background map. */
   ratio: number;
-  /** `fill` is the territory's colour on the map; its badge uses a deep tone of it. */
+  /** `fill` is the territory's colour on the map. */
   shapes: { path: XY[][]; label: XY; number: string; name: string; fill: string }[];
   /** Groups shown on this map, with their joined outline and legend text. */
   groups: { name: string; color: string; path: XY[][]; numbers: string }[];
@@ -319,52 +321,42 @@ function drawOverlay(ctx: CanvasRenderingContext2D, L: Layout, opt: PosterOption
     ctx.stroke();
   }
 
-  // Each number sits in a badge: a deep shade of its territory's colour, a white ring and a soft shadow.
-  // The locality name hangs from it in a white tab edged in the same colour.
+  // Each number sits in a plain round badge: pale blue-grey fill, thin dark teal ring, bold black number.
+  // The locality name, when shown, hangs below it in a white tab with the same ring.
   const size = 22 * u * opt.numberScale;
   const nameSize = size * 0.42;
-  const edge = Math.max(1.2 * u, size * 0.09);
+  const ring = Math.max(1 * u, size * 0.07);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (const sh of L.shapes) {
     const [x, y] = sh.label;
-    const deep = deepTone(sh.fill);
-    ctx.font = `800 ${size}px ${TEXT_FONT}`;
-    const r = Math.max(size * 0.78, ctx.measureText(sh.number).width / 2 + size * 0.3);
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.35)';
-    ctx.shadowBlur = size * 0.3;
-    ctx.shadowOffsetY = size * 0.07;
+    ctx.font = `700 ${size}px ${TEXT_FONT}`;
+    const r = Math.max(size * 0.85, ctx.measureText(sh.number).width / 2 + size * 0.35);
     if (opt.names && sh.name) {
-      ctx.font = `700 ${nameSize}px ${TEXT_FONT}`;
+      ctx.font = `600 ${nameSize}px ${TEXT_FONT}`;
       const w = ctx.measureText(sh.name).width + nameSize * 1.3;
       const h = nameSize * 1.7;
-      const top = y + r - edge;
+      const top = y + r + ring;
       ctx.beginPath();
       ctx.roundRect(x - w / 2, top, w, h, h / 2);
       ctx.fillStyle = '#fff';
       ctx.fill();
-      ctx.shadowColor = 'transparent';
-      ctx.lineWidth = edge * 0.9;
-      ctx.strokeStyle = deep;
+      ctx.lineWidth = ring * 0.8;
+      ctx.strokeStyle = BADGE_RING;
       ctx.stroke();
-      ctx.fillStyle = deep;
+      ctx.fillStyle = '#111';
       ctx.fillText(sh.name, x, top + h / 2 + nameSize * 0.05);
-      ctx.shadowColor = 'rgba(0,0,0,0.35)';
     }
     ctx.beginPath();
     ctx.arc(x, y, r, 0, 2 * Math.PI);
-    ctx.fillStyle = deep;
+    ctx.fillStyle = BADGE_FILL;
     ctx.fill();
-    ctx.restore();
-    ctx.beginPath();
-    ctx.arc(x, y, r - edge * 1.6, 0, 2 * Math.PI);
-    ctx.lineWidth = edge * 0.8;
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = ring;
+    ctx.strokeStyle = BADGE_RING;
     ctx.stroke();
-    ctx.font = `800 ${size}px ${TEXT_FONT}`;
-    ctx.fillStyle = '#fff';
-    ctx.fillText(sh.number, x, y + size * 0.04);
+    ctx.font = `700 ${size}px ${TEXT_FONT}`;
+    ctx.fillStyle = '#111';
+    ctx.fillText(sh.number, x, y + size * 0.05);
   }
 
   if (opt.frame) {
