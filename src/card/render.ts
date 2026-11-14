@@ -90,7 +90,10 @@ function rings(a: Area): number[][][] {
 type Project = (lonLat: [number, number]) => [number, number];
 
 /** Share of the card map kept clear around the territory; wider with landmarks so their boxes fit beside the outline. */
-export const mapMargin = (t: Territory) => (t.landmarks?.some((l) => l.text.trim()) ? 0.2 : 0.08);
+export const mapMargin = (t: Territory) => (t.landmarks?.some((l) => l.text.trim()) ? 0.15 : 0.08);
+/** Landmark label size on the 300 dpi card: 26 px is about 8.5 pt once the card is printed at half A4. */
+const LANDMARK_FONT = 26;
+const LANDMARK_BOX_H = 52;
 
 /** Render an OpenStreetMap background with the territory outline into a w×h region; returns lon/lat → canvas pixels. */
 export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: number, y0: number, w: number, h: number, margin = 0.08): Promise<Project> {
@@ -147,7 +150,7 @@ export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: num
   return project;
 }
 
-/** Grey label boxes with a dot on each spot, kept inside the map region. */
+/** Small white label boxes with a dot on each spot, kept inside the map region. Sized for a 6×4 in card printed up to half A4. */
 function drawLandmarks(ctx: CanvasRenderingContext2D, list: Landmark[], project: Project, r: { x: number; y: number; w: number; h: number }) {
   ctx.save();
   ctx.beginPath();
@@ -158,17 +161,17 @@ function drawLandmarks(ctx: CanvasRenderingContext2D, list: Landmark[], project:
     .map((l) => {
       const [px, py] = project(l.at);
       const [cx, cy] = project(l.box);
-      fitText(ctx, l.text.trim(), (n) => `600 ${n}px ${TEXT_FONT}`, 40, r.w * 0.42);
+      fitText(ctx, l.text.trim(), (n) => `600 ${n}px ${TEXT_FONT}`, LANDMARK_FONT, r.w * 0.36);
       const font = ctx.font;
-      const bw = ctx.measureText(l.text.trim()).width + 70;
-      const bh = 100;
+      const bw = ctx.measureText(l.text.trim()).width + 32;
+      const bh = LANDMARK_BOX_H;
       const bx = Math.min(Math.max(cx - bw / 2, r.x + 6), r.x + r.w - bw - 6);
       const by = Math.min(Math.max(cy - bh / 2, r.y + 6), r.y + r.h - bh - 6);
       return { text: l.text.trim(), font, px, py, bx, by, bw, bh };
     });
   // Leader lines first, so boxes and dots sit on top of them.
-  ctx.strokeStyle = '#555';
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 2;
   for (const b of boxes) {
     ctx.beginPath();
     ctx.moveTo(b.px, b.py);
@@ -176,25 +179,25 @@ function drawLandmarks(ctx: CanvasRenderingContext2D, list: Landmark[], project:
     ctx.stroke();
   }
   for (const b of boxes) {
-    ctx.fillStyle = '#c8c8c8';
-    ctx.fillRect(b.bx, b.by, b.bw, b.bh);
-    ctx.strokeStyle = '#111';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(b.bx, b.by, b.bw, b.bh);
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(b.bx + 7, b.by + 7, b.bw - 14, b.bh - 14);
+    ctx.beginPath();
+    ctx.roundRect(b.bx, b.by, b.bw, b.bh, 8);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+    ctx.fill();
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
     ctx.font = b.font;
     ctx.fillStyle = '#111';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(b.text, b.bx + b.bw / 2, b.by + b.bh / 2 + 2);
+    ctx.fillText(b.text, b.bx + b.bw / 2, b.by + b.bh / 2 + 1);
   }
   for (const b of boxes) {
     ctx.beginPath();
-    ctx.arc(b.px, b.py, 13, 0, 2 * Math.PI);
+    ctx.arc(b.px, b.py, 8, 0, 2 * Math.PI);
     ctx.fillStyle = '#fff';
     ctx.fill();
-    ctx.lineWidth = 7;
+    ctx.lineWidth = 4;
     ctx.strokeStyle = '#a5281b';
     ctx.stroke();
   }
