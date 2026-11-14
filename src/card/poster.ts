@@ -32,6 +32,14 @@ export interface PosterOptions {
   /** Colour by group (with a group outline and a legend) instead of per territory. */
   byGroup: boolean;
   groups: TerritoryGroup[];
+  /** Zoom (1 = all territories fit) and pan (share of the page width/height) chosen by the user. */
+  view?: PosterView;
+}
+
+export interface PosterView {
+  zoom: number;
+  x: number;
+  y: number;
 }
 
 /** A named set of territories, e.g. a field service group. `numbers` is what was typed: "1-12, 15, 20a". */
@@ -196,10 +204,27 @@ export function layout(ts: Territory[], boundary: Area | undefined, opt: PosterO
   const m = 40 * u;
   const title = { w: Math.min(W - 2 * m, 620 * u), h: 150 * u, x: 0, y: m };
   title.x = W - m - title.w;
-  // The territories fill the page below the title box.
-  const box = { x: m, y: title.y + title.h + m, w: W - 2 * m, h: H - title.y - title.h - 2 * m };
-  const scale = Math.min(box.w / (x1 - x0), box.h / (y1 - y0));
-  const origin: XY = [(x0 + x1) / 2 - (box.x + box.w / 2) / scale, (y0 + y1) / 2 - (box.y + box.h / 2) / scale];
+  // The territories fill the whole page when the title box then covers none of them; otherwise the page below it.
+  const fit = (box: Box) => {
+    const k = Math.min(box.w / (x1 - x0), box.h / (y1 - y0));
+    return { k, o: [(x0 + x1) / 2 - (box.x + box.w / 2) / k, (y0 + y1) / 2 - (box.y + box.h / 2) / k] as XY };
+  };
+  const mercRings = ts.flatMap((t) => rings(t.geometry).map((r) => r.map(merc)));
+  const inMerc = (x: number, y: number) =>
+    mercRings.reduce((odd, r) => {
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) if (r[i][1] > y !== r[j][1] > y && x < ((r[j][0] - r[i][0]) * (y - r[i][1])) / (r[j][1] - r[i][1]) + r[i][0]) odd = !odd;
+      return odd;
+    }, false);
+  const full = fit({ x: m, y: m, w: W - 2 * m, h: H - 2 * m });
+  let titleCovers = false;
+  for (let i = 0; i <= 12 && !titleCovers; i++)
+    for (let j = 0; j <= 6 && !titleCovers; j++) titleCovers = inMerc((title.x + (title.w * i) / 12) / full.k + full.o[0], (title.y + (title.h * j) / 6) / full.k + full.o[1]);
+  const base = titleCovers ? fit({ x: m, y: title.y + title.h + m, w: W - 2 * m, h: H - title.y - title.h - 2 * m }) : full;
+  // The user's zoom is around the middle of the page; the pan moves the map by a share of the page.
+  const view = opt.view ?? { zoom: 1, x: 0, y: 0 };
+  const scale = base.k * view.zoom;
+  const centre: XY = [base.o[0] + W / 2 / base.k, base.o[1] + H / 2 / base.k];
+  const origin: XY = [centre[0] - (W / 2 + view.x * W) / scale, centre[1] - (H / 2 + view.y * H) / scale];
   const ratio = (MAP_SCALE * dpi) / DPI;
   const zoom = Math.log2(scale / (512 * ratio));
   const px = (ll: number[]): XY => {

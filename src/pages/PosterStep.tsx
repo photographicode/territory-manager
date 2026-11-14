@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { PageProps } from '../App';
-import { assignGroups, defaultPoster, GROUP_COLOURS, PAPERS, posterLink, posterPdf, renderPosterPreview, type Paper, type PosterOptions, type TerritoryGroup } from '../card/poster';
+import { assignGroups, defaultPoster, GROUP_COLOURS, PAPERS, posterLink, posterPdf, renderPosterPreview, type Paper, type PosterOptions, type PosterView, type TerritoryGroup } from '../card/poster';
 import { mergeAreas } from '../geo/core';
 import { download } from '../geo/kml';
 import { useTask } from '../task';
@@ -14,6 +14,28 @@ export default function PosterStep({ project, update }: PageProps) {
   const set = (patch: Partial<PosterOptions>) => update((p) => ({ ...p, settings: { ...p.settings, poster: { ...opt, ...patch } } }));
   // The outer line: the imported boundary, or all territories joined when there is none.
   const boundary = useMemo(() => project.boundary?.geometry ?? (ts.length ? mergeAreas(ts.map((t) => t.geometry)) : undefined), [project.boundary, ts]);
+  const view: PosterView = opt.view ?? { zoom: 1, x: 0, y: 0 };
+  const setView = (patch: Partial<PosterView>) => set({ view: { ...view, ...patch } });
+  const zoomBy = (f: number) => setView({ zoom: Math.min(8, Math.max(0.5, +(view.zoom * f).toFixed(3))), x: view.x * f, y: view.y * f });
+  // Drag the preview to move the map; the map follows the pointer while dragging.
+  const drag = useRef<{ x: number; y: number } | null>(null);
+  const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    drag.current = { x: e.clientX, y: e.clientY };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const c = e.currentTarget.querySelector('canvas');
+    if (drag.current && c) c.style.transform = `translate(${e.clientX - drag.current.x}px, ${e.clientY - drag.current.y}px)`;
+  };
+  const onUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const c = e.currentTarget.querySelector('canvas');
+    if (!drag.current || !c) return;
+    const dx = (e.clientX - drag.current.x) / c.clientWidth;
+    const dy = (e.clientY - drag.current.y) / c.clientHeight;
+    drag.current = null;
+    if (Math.abs(dx) + Math.abs(dy) > 0.002) setView({ x: view.x + dx, y: view.y + dy });
+    else c.style.transform = '';
+  };
   const name = `Territory Map${s.congregation ? ` - ${s.congregation}` : ''} (${opt.paper})`;
 
   useEffect(() => {
@@ -127,7 +149,17 @@ export default function PosterStep({ project, update }: PageProps) {
             </a>
           )}
         </div>
-        <div ref={preview} className="preview-box">
+        <div className="toolbar" role="group" aria-label="Move and zoom the map">
+          <button className="btn ghost" onClick={() => zoomBy(1.15)}>Zoom in</button>
+          <button className="btn ghost" onClick={() => zoomBy(1 / 1.15)}>Zoom out</button>
+          <button className="btn ghost" onClick={() => setView({ x: view.x - 0.05 })}>Left</button>
+          <button className="btn ghost" onClick={() => setView({ x: view.x + 0.05 })}>Right</button>
+          <button className="btn ghost" onClick={() => setView({ y: view.y - 0.05 })}>Up</button>
+          <button className="btn ghost" onClick={() => setView({ y: view.y + 0.05 })}>Down</button>
+          <button className="btn ghost" onClick={() => set({ view: undefined })}>Fit all</button>
+          <span className="muted tiny">{Math.round(view.zoom * 100)}% · or drag the map</span>
+        </div>
+        <div ref={preview} className="preview-box" style={{ cursor: 'grab', touchAction: 'none', overflow: 'hidden' }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}>
           <p className="muted">Rendering…</p>
         </div>
         <p className="muted tiny">Preview only. The PDF has far more map detail (street and place names).</p>
