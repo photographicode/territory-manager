@@ -10,6 +10,7 @@ import Envelope from 'jsts/org/locationtech/jts/geom/Envelope.js';
 import Location from 'jsts/org/locationtech/jts/geom/Location.js';
 import GeometryNoder from 'jsts/org/locationtech/jts/noding/snapround/GeometryNoder.js';
 import Polygonizer from 'jsts/org/locationtech/jts/operation/polygonize/Polygonizer.js';
+import DouglasPeuckerSimplifier from 'jsts/org/locationtech/jts/simplify/DouglasPeuckerSimplifier.js';
 import UnaryUnionOp from 'jsts/org/locationtech/jts/operation/union/UnaryUnionOp.js';
 import IndexedPointInAreaLocator from 'jsts/org/locationtech/jts/algorithm/locate/IndexedPointInAreaLocator.js';
 import TopologyPreservingSimplifier from 'jsts/org/locationtech/jts/simplify/TopologyPreservingSimplifier.js';
@@ -48,7 +49,15 @@ export function clean(g: G): G {
   if (g.isValid()) return g;
   const fixed = g.buffer(0);
   if (!fixed.isEmpty()) return fixed;
-  // buffer(0) can wipe out an outline that crosses itself (seen in imported KML); rebuild it from its edges.
+  // buffer(0) can wipe out an outline with doubled points and tiny loops (seen in imported KML):
+  // drop points closer than about 0.1 m first, then try again.
+  try {
+    const tidy = DouglasPeuckerSimplifier.simplify(g, 1e-6);
+    if (!tidy.isEmpty() && tidy.getArea() > 0) return tidy.isValid() ? tidy : tidy.buffer(0);
+  } catch {
+    // fall through to rebuilding from the edges
+  }
+  // Last resort: rebuild the outline from its noded edges.
   try {
     const noded = new GeometryNoder(PM).node(list([g.getBoundary()]));
     const pz = new Polygonizer();

@@ -33,6 +33,7 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
   // Problems are shown in the panel, not in blocking pop-ups.
   const [notice, setNotice] = useState('');
   const [numberLog, setNumberLog] = useState<string[]>([]);
+  const [gap, setGap] = useState(10);
   const { territories, settings } = project;
   const task = useTask();
   const index = useMemo(() => (osm ? new BuildingIndex(osm.buildings) : null), [osm]);
@@ -172,10 +173,14 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
 
   /** Close small gaps and slivers between neighbouring territories, so their borders meet exactly. */
   function snapNeighbours() {
-    const out = snapToNeighbours(territories.map((t) => t.geometry));
+    const out = snapToNeighbours(
+      territories.map((t) => t.geometry),
+      gap,
+      project.boundary?.geometry,
+    );
     const byId = new Map(territories.map((t, i) => [t.id, out[i]]));
     update((p) => ({ ...p, territories: p.territories.map((t) => (byId.has(t.id) ? { ...t, geometry: byId.get(t.id)! } : t)) }), true);
-    setNotice('Neighbouring borders within 10 m now meet exactly. Undo puts them back.');
+    setNotice(`Borders less than ${gap} m apart now meet exactly. Undo puts them back.`);
   }
 
   /** Put the stretches of border that run along a road (within 15 m) exactly on it; the rest stays where it is. */
@@ -354,9 +359,19 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
           <button className="btn ghost" disabled={task.busy} onClick={snapToRoads} title="Put the parts of borders that run along a road (within 15 m) exactly on it; nothing else moves. Undo puts them back">
             Snap borders to roads
           </button>
-          <button className="btn ghost" disabled={task.busy} onClick={snapNeighbours} title="Make neighbouring borders that almost meet (within 10 m) meet exactly, closing small gaps. Undo puts them back">
+          <button className="btn ghost" disabled={task.busy} onClick={snapNeighbours} title="Make borders that almost meet (neighbours and the congregation outline) meet exactly, closing gaps up to the size chosen. Undo puts them back">
             Snap to neighbours
           </button>
+          <label className="inline-field" title="Gaps up to this wide are closed by Snap to neighbours">
+            <span>gaps up to</span>
+            <select value={gap} onChange={(e) => setGap(Number(e.target.value))} aria-label="Largest gap to close, in metres">
+              {[5, 10, 20, 30, 50].map((m) => (
+                <option key={m} value={m}>
+                  {m} m
+                </option>
+              ))}
+            </select>
+          </label>
           <button className="btn ghost" onClick={renumber} title="Number the territories 1, 2, 3 … from the top of the map to the bottom">
             Renumber top to bottom
           </button>

@@ -25,6 +25,12 @@ describe('snapping', () => {
     expect(Math.abs(ax - bx)).toBeLessThan(1e-9);
   });
 
+  it('closes a gap to the congregation outline', () => {
+    const outline = sq(77.43 - D, 8.17, 77.45, 8.18);
+    const [ra] = snapToNeighbours([sq(77.43, 8.17, 77.44, 8.18)], 10, outline);
+    expect(Math.min(...ring(ra).map((p) => p[0]))).toBeCloseTo(77.43 - D, 9);
+  });
+
   it('leaves far-apart territories alone', () => {
     const a = sq(77.43, 8.17, 77.44, 8.18);
     const [ra] = snapToNeighbours([a, sq(77.46, 8.17, 77.47, 8.18)]);

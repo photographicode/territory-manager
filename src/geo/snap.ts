@@ -111,15 +111,17 @@ export function snapToLines(areas: Area[], roads: XY[][], reach = 15): Area[] {
 }
 
 /**
- * Neighbouring borders that almost meet (within `reach` m) are made to meet exactly, so no gap or sliver
+ * Neighbouring borders (and the congregation outline) that almost meet, within `reach` m, are made to meet exactly, so no gap or sliver
  * is left between territories. One territory at a time, each onto its neighbours as they already are,
  * so a pair settles on one shared line instead of both moving to where the other was.
  */
-export function snapToNeighbours(areas: Area[], reach = 10): Area[] {
+export function snapToNeighbours(areas: Area[], reach = 10, outline?: Area): Area[] {
   const out = [...areas];
+  // The congregation outline counts as a neighbour too, so gaps along the edge of the whole area close as well.
+  const edge: Line[] = outline ? rings(outline).flatMap((poly) => poly.map((r) => ({ pts: r, closed: true }))) : [];
   for (let k = 0; k < out.length; k++) {
-    const owner: number[] = [];
-    const lines: Line[] = [];
+    const owner: number[] = edge.map(() => -1);
+    const lines: Line[] = [...edge];
     out.forEach((a, i) => rings(a).forEach((poly) => poly.forEach((r) => (lines.push({ pts: r, closed: true }), owner.push(i)))));
     const index = new SegmentIndex(lines, cellFor(reach));
     out[k] = shape(rings(out[k]).map((poly) => poly.map((r) => snapRing(r, index, lines, reach, (li) => owner[li] === k))));
