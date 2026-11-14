@@ -12,6 +12,7 @@ import { uid, type Area, type OsmData, type Territory } from '../types';
 import { useTask } from '../task';
 import KmlExport from './KmlExport';
 import { byNumber } from './TerritoriesPage';
+import { numbersFromNames } from '../numbering';
 
 /** Number territories 1, 2, 3 … from the top of the map to the bottom, so neighbours get nearby numbers. */
 const numbered = (ts: Territory[]) => sweepOrder(ts).map((t, i) => ({ ...t, number: String(i + 1) }));
@@ -213,6 +214,13 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
     update((p) => ({ ...p, territories: numbered(p.territories) }), true);
   }
 
+  // Names like "House to House 12" carry the number; this puts every territory back on its name's number.
+  function numberFromNames() {
+    const r = numbersFromNames(territories);
+    if ('problem' in r) return alert(`Cannot number from names. ${r.problem}`);
+    update((p) => ({ ...p, territories: p.territories.map((t) => ({ ...t, number: r.numbers.get(t.id) ?? t.number })) }), true);
+  }
+
   /** Give a territory a new number; the territory that had that number takes the old one. */
   function setNumber(id: string, value: string) {
     const number = value.trim();
@@ -327,6 +335,9 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
           </button>
           <button className="btn ghost" onClick={renumber} title="Number the territories 1, 2, 3 … from the top of the map to the bottom">
             Renumber top to bottom
+          </button>
+          <button className="btn ghost" onClick={numberFromNames} title="Give each territory the number at the end of its locality name, e.g. House to House 12 becomes 12">
+            Number from names
           </button>
           <button
             className="btn ghost"

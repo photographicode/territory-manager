@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import type { PageProps } from '../App';
-import { mapMargin, renderCard } from '../card/render';
+import { arrangeLandmarks } from '../card/arrange';
+import { CARD_MAP, landmarkBox, mapMargin, renderCard } from '../card/render';
 import { createMap, toLatLngs } from '../map';
 import { MAX_LANDMARKS, type Landmark } from '../types';
 import { byNumber } from './TerritoriesPage';
@@ -20,6 +21,22 @@ export default function CardEditor({ project, update }: PageProps) {
 
   const setMarks = (fn: (l: Landmark[]) => Landmark[], undoable = false) =>
     update((p) => ({ ...p, territories: p.territories.map((x) => (x.id === t.id ? { ...x, landmarks: fn(x.landmarks ?? []) } : x)) }), undoable);
+  const [arranged, setArranged] = useState('');
+  /** Re-place the landmark boxes on these cards; one Undo puts them all back. */
+  function arrange(ids: string[]) {
+    let touching = 0;
+    let cards = 0;
+    const next = new Map<string, Landmark[]>();
+    for (const x of project.territories) {
+      if (!ids.includes(x.id) || !x.landmarks?.some((l) => l.text.trim())) continue;
+      const r = arrangeLandmarks(x.geometry, x.landmarks, landmarkBox, CARD_MAP.w, CARD_MAP.h, mapMargin(x));
+      touching += r.touching;
+      cards++;
+      next.set(x.id, r.marks);
+    }
+    update((p) => ({ ...p, territories: p.territories.map((x) => (next.has(x.id) ? { ...x, landmarks: next.get(x.id) } : x)) }), true);
+    setArranged(`Arranged ${cards} card${cards === 1 ? '' : 's'}.${touching ? ` ${touching} box${touching === 1 ? '' : 'es'} could not be kept off the territory; remove a landmark or drag it.` : ''}`);
+  }
   // Map handlers are bound once per territory; they read the latest state from here.
   const latest = useRef({ marks, setMarks });
   latest.current = { marks, setMarks };
@@ -118,6 +135,23 @@ export default function CardEditor({ project, update }: PageProps) {
             </button>
           </div>
         ))}
+        {project.territories.some((x) => x.landmarks?.some((l) => l.text.trim())) && (
+          <div className="toolbar small">
+            {marks.some((l) => l.text.trim()) && (
+              <button className="btn ghost" onClick={() => arrange([t.id])} title="Move this card's boxes beside the territory, apart from each other">
+                Arrange boxes
+              </button>
+            )}
+            <button className="btn ghost" onClick={() => arrange(project.territories.map((x) => x.id))} title="Arrange the boxes on every card">
+              Arrange all cards
+            </button>
+          </div>
+        )}
+        {arranged && (
+          <p className="muted tiny" aria-live="polite">
+            {arranged}
+          </p>
+        )}
         {!marks.length && <p className="muted">No landmarks on this card yet.</p>}
         {marks.length >= MAX_LANDMARKS && <p className="muted tiny">This card has the most landmarks it can hold.</p>}
         {marks.some((l) => !l.text.trim()) && <p className="warn">Boxes without a name are left off the printed card.</p>}

@@ -99,6 +99,14 @@ export const mapMargin = (t: Territory) => (t.landmarks?.some((l) => l.text.trim
 /** Landmark label size on the 300 dpi card: 26 px is about 8.5 pt once the card is printed at half A4. */
 const LANDMARK_FONT = 26;
 const LANDMARK_BOX_H = 52;
+/** Card map region in card pixels; landmark boxes are placed inside it. */
+export const CARD_MAP = { w: 1190, h: 690 };
+/** Width and height of a landmark's box on the card, the same as drawLandmarks draws it. */
+export function landmarkBox(text: string): [number, number] {
+  const ctx = document.createElement('canvas').getContext('2d')!;
+  fitText(ctx, text.trim(), (n) => `600 ${n}px ${TEXT_FONT}`, LANDMARK_FONT, CARD_MAP.w * 0.36);
+  return [ctx.measureText(text.trim()).width + 32, LANDMARK_BOX_H];
+}
 
 /** Render an OpenStreetMap background with the territory outline into a w×h region; returns lon/lat → canvas pixels. */
 export async function drawMap(ctx: CanvasRenderingContext2D, area: Area, x0: number, y0: number, w: number, h: number, margin = 0.08): Promise<Project> {
@@ -288,7 +296,7 @@ export async function renderCard(t: Territory, s: Settings): Promise<HTMLCanvasE
   ctx.fillText(t.number, (numLabelX + numLabelW + 12 + W - 50) / 2, rowY - 12);
 
   // Map and QR
-  const map = { x: 60, y: 255, w: 1190, h: 690 };
+  const map = { x: 60, y: 255, ...CARD_MAP };
   const project = await drawMap(ctx, t.geometry, map.x, map.y, map.w, map.h, mapMargin(t));
   if (t.landmarks?.length) drawLandmarks(ctx, t.landmarks, project, map);
   ctx.lineWidth = 2;
