@@ -117,9 +117,27 @@ function snapRing(ring: XY[], index: SegmentIndex, lines: Line[], reach: number,
     tidy.push(q);
   }
   while (tidy.length > 2 && m(tidy[0], tidy[tidy.length - 1]) < 0.05) tidy.pop();
-  // Safety: a border never ends up with many times its points; if it would, keep it as it was.
+  // Safety: a border never ends up with many times its points, or crossing itself; if it would, keep it as it was.
   if (tidy.length < 3 || tidy.length > pts.length * 4 + 200) return ring;
-  return [...tidy, tidy[0]];
+  const snapped: XY[] = [...tidy, tidy[0]];
+  return crossesItself(snapped) && !crossesItself(ring) ? ring : snapped;
+}
+
+const turn = (a: XY, b: XY, c: XY) => Math.sign((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+/** Whether two edges of a closed ring cross (edges that share a corner do not count). */
+function crossesItself(r: XY[]): boolean {
+  const n = r.length - 1;
+  for (let i = 0; i < n; i++)
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue;
+      const [a, b, c, d] = [r[i], r[i + 1], r[j], r[j + 1]];
+      const t1 = turn(a, b, c);
+      const t2 = turn(a, b, d);
+      const t3 = turn(c, d, a);
+      const t4 = turn(c, d, b);
+      if (t1 * t2 < 0 && t3 * t4 < 0) return true;
+    }
+  return false;
 }
 
 const cellFor = (reach: number) => (reach / 111000) * 4;

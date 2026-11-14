@@ -3,7 +3,7 @@ import L from 'leaflet';
 import '@geoman-io/leaflet-geoman-free';
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
 import type { PageProps } from '../App';
-import { areasTouch, BuildingIndex, countBuildings, fillPondsInAreas, mergeAreas, splitByLine, suggestLocality, sweepOrder } from '../geo/core';
+import { areaKm2, areasTouch, BuildingIndex, countBuildings, fillPondsInAreas, mergeAreas, splitByLine, suggestLocality, sweepOrder } from '../geo/core';
 import { loadOsm, saveOsm } from '../store';
 import { fetchOsm } from '../geo/osm';
 import { snapToLines, snapToNeighbours } from '../geo/snap';
@@ -18,6 +18,20 @@ import { numbersFromNames } from '../numbering';
 const numbered = (ts: Territory[]) => sweepOrder(ts).map((t, i) => ({ ...t, number: String(i + 1) }));
 
 type Mode = 'select' | 'cut' | 'edit';
+
+/** A snapped outline that lost more than 2% of its area went wrong (it crosses itself); keep the old one instead. */
+function keepIfBroken(before: Area[], after: Area[]): { out: Area[]; kept: number[] } {
+  const kept: number[] = [];
+  const out = after.map((g, i) => {
+    const a0 = areaKm2(before[i]);
+    if (a0 > 0 && areaKm2(g) < a0 * 0.98) {
+      kept.push(i);
+      return before[i];
+    }
+    return g;
+  });
+  return { out, kept };
+}
 
 export default function ReviewStep({ project, update, undoLast, undoAll, undoCount, go }: PageProps) {
   const el = useRef<HTMLDivElement>(null);
@@ -173,14 +187,11 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
 
   /** Close small gaps and slivers between neighbouring territories, so their borders meet exactly. */
   function snapNeighbours() {
-    const out = snapToNeighbours(
-      territories.map((t) => t.geometry),
-      gap,
-      project.boundary?.geometry,
-    );
+    const before = territories.map((t) => t.geometry);
+    const { out, kept } = keepIfBroken(before, snapToNeighbours(before, gap, project.boundary?.geometry));
     const byId = new Map(territories.map((t, i) => [t.id, out[i]]));
     update((p) => ({ ...p, territories: p.territories.map((t) => (byId.has(t.id) ? { ...t, geometry: byId.get(t.id)! } : t)) }), true);
-    setNotice(`Borders less than ${gap} m apart now meet exactly. Undo puts them back.`);
+    setNotice(`Borders less than ${gap} m apart now meet exactly.${kept.length ? ` Left as they were (snapping would break the outline): ${kept.map((i) => territories[i].number).join(', ')}.` : ''} Undo puts them back.`);
   }
 
   /** Put the stretches of border that run along a road (within 15 m) exactly on it; the rest stays where it is. */
@@ -204,7 +215,7 @@ export default function ReviewStep({ project, update, undoLast, undoAll, undoCou
         }
         const roads = data;
         report('Moving borders that run along a road onto it', 0.6);
-        const out = snapToLines(areas, roads.lines.map((l) => l.coords as [number, number][]));
+        const out = keepIfBroken(areas, snapToLines(areas, roads.lines.map((l) => l.coords as [number, number][]))).out;
         const index = new BuildingIndex(roads.buildings);
         return out.map((g) => ({ g, n: countBuildings(index, g) }));
       },
