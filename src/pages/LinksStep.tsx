@@ -2,6 +2,7 @@
 // Google has no way to make those maps for us, so this page hands out each territory's KML and collects the links.
 import { useState } from 'react';
 import type { PageProps } from '../App';
+import { compactNumbers } from '../card/poster';
 import { download, fileName, territoryKml } from '../geo/kml';
 import { isGoogleMap, parseLinks, previewLink } from '../links';
 import { safeUrl } from '../safe';
@@ -12,6 +13,19 @@ export default function LinksStep({ project, update }: PageProps) {
   const ts = [...project.territories].sort(byNumber);
   const [bulk, setBulk] = useState('');
   const [note, setNote] = useState('');
+  const [final, setFinal] = useState(false);
+  const [copied, setCopied] = useState('');
+  const missing = ts.filter((t) => !isGoogleMap(t.mapUrl));
+  // Claude Code has the territory-links skill; this prompt starts it with what it needs to know.
+  const prompt = `/territory-links Make the Google My Maps for the ${missing.length} territories in Territory Studio (generator.congregationassistant.com) that have no Google link yet: ${compactNumbers(missing.map((t) => t.number))}. The locality names are final.`;
+  async function copyPrompt() {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied('Copied. Paste it into Claude Code and press Enter.');
+    } catch {
+      setCopied('Could not copy automatically: select the text below and copy it.');
+    }
+  }
   const linked = ts.filter((t) => isGoogleMap(t.mapUrl)).length;
   const pasted = parseLinks(bulk);
   const setLink = (id: string, raw: string) =>
@@ -50,6 +64,28 @@ export default function LinksStep({ project, update }: PageProps) {
           <li>Paste it next to the territory below. Edit links are turned into view links automatically.</li>
         </ol>
       </div>
+
+      {missing.length > 0 && (
+        <div className="card-box">
+          <h3>Let Claude make the maps</h3>
+          <p className="muted tiny">Claude opens Google My Maps in your Chrome, makes one shared map per territory and fills in the links here. Close every other tab of this app first.</p>
+          <label className="check">
+            <input type="checkbox" checked={final} onChange={(e) => setFinal(e.target.checked)} />
+            <span>The locality names are final (maps are titled with them)</span>
+          </label>
+          <button className="btn primary" disabled={!final} onClick={copyPrompt}>
+            Copy the prompt for Claude ({missing.length} maps)
+          </button>
+          {copied && (
+            <>
+              <p className="muted tiny" aria-live="polite">
+                {copied}
+              </p>
+              <textarea readOnly rows={3} value={prompt} style={{ width: '100%' }} onFocus={(e) => e.currentTarget.select()} />
+            </>
+          )}
+        </div>
+      )}
 
       <div className="card-box">
         <label className="field" style={{ width: '100%' }}>
