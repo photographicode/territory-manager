@@ -2,7 +2,7 @@
 // so even 2A0 at 300 dpi never needs one giant canvas in memory.
 import QRCode from 'qrcode';
 import { PDFDocument } from 'pdf-lib';
-import * as maplibregl from 'maplibre-gl';
+import * as maplibregl from './maplibre';
 import { CARD_STYLE_URL } from './tiles';
 import { ensureFonts, qrLink } from './render';
 import { safeUrl } from '../safe';

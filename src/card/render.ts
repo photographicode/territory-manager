@@ -2,7 +2,7 @@
 // complex scripts are shaped correctly before the card is placed into the PDF as an image.
 import QRCode from 'qrcode';
 import { PDFDocument } from 'pdf-lib';
-import * as maplibregl from 'maplibre-gl';
+import * as maplibregl from './maplibre';
 import { CARD_STYLE_URL } from './tiles';
 import { encodeArea } from '../geo/codec';
 import { shareOutline } from '../geo/core';
