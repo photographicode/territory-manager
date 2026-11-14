@@ -3,7 +3,7 @@ import type { PageProps } from '../App';
 import { cardsPdf, qrLink, renderCard, viewerUrl } from '../card/render';
 import { zipSync } from 'fflate';
 import { download, fileName } from '../geo/kml';
-import type { Settings, Territory } from '../types';
+import { FOOTER_FONTS, type FooterFont, type Settings, type Territory } from '../types';
 import { useTask, type Report } from '../task';
 import KmlExport from './KmlExport';
 
@@ -126,6 +126,25 @@ export default function CardsStep({ project, update }: PageProps) {
           <span>Instructions printed at the bottom (any language)</span>
           <textarea rows={4} value={s.footerText} onChange={(e) => set({ footerText: e.target.value })} />
         </label>
+        <div className="row">
+          <label className="field">
+            <span>Instructions font (all Indian languages)</span>
+            <select value={s.footerFont} onChange={(e) => set({ footerFont: e.target.value as FooterFont })}>
+              {Object.entries(FOOTER_FONTS).map(([v, label]) => (
+                <option key={v} value={v}>{label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Instructions size</span>
+            <select value={s.footerSize} onChange={(e) => set({ footerSize: Number(e.target.value) })}>
+              <option value={0}>Fit to space</option>
+              {[6, 7, 8, 9, 10, 11, 12].map((pt) => (
+                <option key={pt} value={pt}>{pt} pt</option>
+              ))}
+            </select>
+          </label>
+        </div>
         <label className="field">
           <span>Map page address in QR codes (leave empty to use this site)</span>
           <input value={s.viewerUrl} placeholder={viewerUrl(s)} onChange={(e) => set({ viewerUrl: e.target.value.trim() })} />

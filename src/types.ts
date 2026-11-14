@@ -85,6 +85,10 @@ export interface Settings {
   localityLabel: string;
   numberLabel: string;
   footerText: string;
+  /** Font of the instructions text; every choice covers all Indian scripts (Noto). */
+  footerFont: FooterFont;
+  /** Size of the instructions text in points on the card; 0 shrinks it to fit. */
+  footerSize: number;
   /** Public address of view.html for QR codes; empty means the site this app runs on. */
   viewerUrl: string;
   /** Options for the full wall map; unset until first changed. */
@@ -129,8 +133,18 @@ export const defaultSettings = (): Settings => ({
   numberLabel: 'Terr. No.',
   footerText:
     'Please keep this card in the envelope. Do not soil, mark or bend it. Each time the territory is covered, please inform the brother who cares for the territory files.',
+  footerFont: 'sans-bold',
+  footerSize: 0,
   viewerUrl: '',
 });
+
+export type FooterFont = 'sans-bold' | 'sans' | 'serif-bold' | 'serif';
+export const FOOTER_FONTS: Record<FooterFont, string> = {
+  'sans-bold': 'Sans, bold',
+  sans: 'Sans, regular',
+  'serif-bold': 'Serif, bold',
+  serif: 'Serif, regular',
+};
 
 export const newProject = (): Project => ({
   version: 1,

@@ -6,14 +6,19 @@ import * as maplibregl from './maplibre';
 import { CARD_STYLE_URL } from './tiles';
 import { encodeArea } from '../geo/codec';
 import { shareOutline } from '../geo/core';
-import type { Area, Landmark, Settings, Territory } from '../types';
+import type { Area, FooterFont, Landmark, Settings, Territory } from '../types';
 import { safeUrl } from '../safe';
 
 export const CARD = { widthIn: 6, heightIn: 4, dpi: 300 };
 const W = CARD.widthIn * CARD.dpi;
 const H = CARD.heightIn * CARD.dpi;
-const TEXT_FONT = '"Noto Sans", "Noto Sans Malayalam", sans-serif';
-const TITLE_FONT = '"Noto Serif", "Noto Sans Malayalam", serif';
+// Noto covers every Indian script; the browser downloads only the scripts the text uses.
+const INDIC = ['Devanagari', 'Bengali', 'Gurmukhi', 'Gujarati', 'Oriya', 'Tamil', 'Telugu', 'Kannada', 'Malayalam'];
+const families = (kind: 'Sans' | 'Serif') => [`Noto ${kind}`, ...INDIC.map((x) => `Noto ${kind} ${x}`)];
+const stack = (kind: 'Sans' | 'Serif') => `${families(kind).map((f) => `"${f}"`).join(', ')}, ${kind === 'Sans' ? 'sans-serif' : 'serif'}`;
+const TEXT_FONT = stack('Sans');
+const TITLE_FONT = `"Noto Serif", ${stack('Sans')}`;
+const footerFont = (f: FooterFont) => ({ kind: f.startsWith('serif') ? ('Serif' as const) : ('Sans' as const), weight: f.endsWith('bold') ? 700 : 400 });
 // Keeps the QR at a size phones scan reliably when printed ~37 mm wide (about 90 outline points).
 const MAX_QR_CODE = 450;
 
@@ -241,11 +246,8 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, font: (size: numbe
 }
 
 export async function ensureFonts(sample: string) {
-  await Promise.all(
-    [`700 40px "Noto Serif"`, `700 40px "Noto Sans"`, `400 40px "Noto Sans"`, `700 40px "Noto Sans Malayalam"`, `400 40px "Noto Sans Malayalam"`].map((f) =>
-      document.fonts.load(f, sample).catch(() => undefined),
-    ),
-  );
+  const faces = [`700 40px "Noto Serif"`, ...[400, 600, 700].flatMap((w) => families('Sans').map((f) => `${w} 40px "${f}"`)), ...[400, 700].flatMap((w) => families('Serif').map((f) => `${w} 40px "${f}"`))];
+  await Promise.all(faces.map((f) => document.fonts.load(f, sample).catch(() => undefined)));
 }
 
 export async function renderCard(t: Territory, s: Settings): Promise<HTMLCanvasElement> {
@@ -307,10 +309,12 @@ export async function renderCard(t: Territory, s: Settings): Promise<HTMLCanvasE
 
   // Footer instructions
   ctx.fillStyle = '#111';
-  let size = 38;
+  const ff = footerFont(s.footerFont ?? 'sans-bold');
+  // A chosen size (points on the card, 300 dpi) is kept unless the text would not fit; then it shrinks.
+  let size = s.footerSize > 0 ? Math.round((s.footerSize * CARD.dpi) / 72) : 38;
   let lines: string[];
   do {
-    ctx.font = `700 ${size}px ${TEXT_FONT}`;
+    ctx.font = `${ff.weight} ${size}px ${stack(ff.kind)}`;
     lines = wrap(ctx, s.footerText, W - 160);
   } while (lines.length * size * 1.4 > H - 990 && --size > 16);
   const lh = size * 1.4;
