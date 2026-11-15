@@ -19,6 +19,8 @@ export default function LinksStep({ project, update }: PageProps) {
   // Claude Code has the territory-links skill; this prompt starts it with what it needs to know.
   const prompt = `/territory-links Make the Google My Maps for the ${missing.length} territories in Territory Studio (generator.congregationassistant.com) that have no Google link yet: ${compactNumbers(missing.map((t) => t.number))}. The locality names are final.`;
   async function copyPrompt() {
+    // Show the text at once: if the browser holds or blocks the clipboard, it can still be copied by hand.
+    setCopied('Copying… if nothing happens, select the text below and copy it.');
     try {
       await navigator.clipboard.writeText(prompt);
       setCopied('Copied. Paste it into Claude Code and press Enter.');
