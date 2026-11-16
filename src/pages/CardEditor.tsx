@@ -6,6 +6,7 @@ import { CARD_MAP, landmarkBox, mapMargin, renderCard } from '../card/render';
 import { createMap, toLatLngs } from '../map';
 import { MAX_LANDMARKS, type Landmark } from '../types';
 import { byNumber } from './TerritoriesPage';
+import { openManager, outlines, sendWhenReady } from '../sync';
 
 const ll = ([lon, lat]: [number, number]): L.LatLngTuple => [lat, lon];
 const lonLat = (p: L.LatLng): [number, number] => [p.lng, p.lat];
@@ -15,6 +16,19 @@ export default function CardEditor({ project, update }: PageProps) {
   const [current, setCurrent] = useState(ts[0]?.id ?? '');
   const t = ts.find((x) => x.id === current) ?? ts[0];
   const marks = t?.landmarks ?? [];
+  const [naming, setNaming] = useState('');
+  /** The congregation knows the area: send the outlines to the territory manager, which emails them a naming link. */
+  async function sendForNaming() {
+    const win = openManager();
+    if (!win) return setNaming('The territory manager window was blocked. Allow pop-ups for this site and try again.');
+    setNaming('Waiting for the territory manager (sign in there if it asks)…');
+    try {
+      await sendWhenReady(win, project.settings.congregation, outlines(ts, project.settings));
+      setNaming('Sent. In the territory manager window, choose the request and press "Send naming link by email".');
+    } catch (e) {
+      setNaming(e instanceof Error ? e.message : String(e));
+    }
+  }
   const mapEl = useRef<HTMLDivElement>(null);
   const preview = useRef<HTMLDivElement>(null);
   const layer = useRef<L.LayerGroup>();
@@ -104,6 +118,17 @@ export default function CardEditor({ project, update }: PageProps) {
     <div className="split-layout cards">
       <aside className="panel">
         <h2>Cards</h2>
+        <div className="card-box">
+          <p className="muted tiny">The congregation knows the area best. Send them all {ts.length} territories to name, with their junctions and landmarks; their names come back here.</p>
+          <button className="btn" onClick={sendForNaming}>
+            Send to the congregation for naming
+          </button>
+          {naming && (
+            <p className="muted tiny" aria-live="polite">
+              {naming}
+            </p>
+          )}
+        </div>
         <label className="field">
           <span>Territory</span>
           <select value={t.id} onChange={(e) => setCurrent(e.target.value)}>

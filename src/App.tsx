@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { listenForHandoff, type Incoming } from './handoff';
+import { applyNames } from './names';
 import { useProject, type ProjectApi } from './store';
 import type { Stage } from './types';
 import { Icon, type IconName } from './icons';
@@ -23,16 +24,30 @@ const MANAGE: { id: Stage; label: string; icon: IconName }[] = [
 
 export default function App() {
   const api = useProject();
+  const { update } = api;
   const [page, setPage] = useState<Stage | null>(null);
   // A boundary file sent from the territory dashboard opens on the Boundary step.
   const [incoming, setIncoming] = useState<Incoming | null>(null);
   useEffect(
     () =>
-      listenForHandoff((i) => {
-        setIncoming(i);
-        setPage('boundary');
-      }),
-    [],
+      listenForHandoff(
+        (i) => {
+          setIncoming(i);
+          setPage('boundary');
+        },
+        // Names the congregation wrote on its naming link: localities and landmarks, by territory number (undoable).
+        (names) => {
+          let note = '';
+          update((p) => {
+            const r = applyNames(p, names);
+            note = `${r.named} territories named, ${r.marks} landmarks added.${r.missing.length ? ` No territory numbered ${r.missing.slice(0, 10).join(', ')}.` : ''} Press "Arrange all cards" to move the landmark boxes clear of the territories.`;
+            return r.project;
+          }, true);
+          setPage('cards');
+          setTimeout(() => alert(note), 0);
+        },
+      ),
+    [update],
   );
   if (!api.project) return <div className="loading">Loading…</div>;
   const p = api.project;

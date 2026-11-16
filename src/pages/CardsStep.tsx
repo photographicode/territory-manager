@@ -6,6 +6,7 @@ import { download, fileName } from '../geo/kml';
 import { FOOTER_FONTS, type FooterFont, type Settings, type Territory } from '../types';
 import { useTask, type Report } from '../task';
 import KmlExport from './KmlExport';
+import { collect, openManager, sendWhenReady } from '../sync';
 
 const byNumber = (a: { number: string }, b: { number: string }) => a.number.localeCompare(b.number, undefined, { numeric: true });
 
@@ -13,6 +14,7 @@ export default function CardsStep({ project, update }: PageProps) {
   const s = project.settings;
   const ts = [...project.territories].sort(byNumber);
   const [current, setCurrent] = useState(ts[0]?.id ?? '');
+  const [sent, setSent] = useState('');
   const task = useTask();
   const busy = task.busy;
   const preview = useRef<HTMLDivElement>(null);
@@ -62,6 +64,24 @@ export default function CardsStep({ project, update }: PageProps) {
       cancellable: true,
     });
     if (bytes) download(name, bytes, 'application/pdf');
+  }
+
+  /** Draws every card and hands the territories, outlines and images to the territory manager in one go. */
+  async function sendToManager() {
+    const win = openManager();
+    if (!win) return void setSent('The territory manager window was blocked. Allow pop-ups for this site and try again.');
+    setSent('');
+    const done = await task.run(
+      `Sending ${ts.length} territories to the territory manager`,
+      async (report, signal) => {
+        const items = await collect(ts, s, (text, n) => report(text, n), signal);
+        report('Waiting for the territory manager (sign in there if it asks)…', 1);
+        await sendWhenReady(win, s.congregation, items);
+        return true;
+      },
+      { cancellable: true },
+    );
+    if (done) setSent('Sent. In the territory manager window, choose the workspace and press Save.');
   }
 
   async function separatePdfs() {
@@ -179,6 +199,18 @@ export default function CardsStep({ project, update }: PageProps) {
             Only the card shown
           </button>
         </div>
+        <h3>Territory manager</h3>
+        <p className="muted tiny">Put every territory into the territory manager: number, locality, map link, outline and card image. Territories already there are updated by number.</p>
+        <div className="dl-list">
+          <button className="btn primary" disabled={!!busy} onClick={sendToManager}>
+            Send all {ts.length} to the territory manager
+          </button>
+        </div>
+        {sent && (
+          <p className="muted tiny" aria-live="polite">
+            {sent}
+          </p>
+        )}
         <h3>Google My Maps</h3>
         <p className="muted tiny">
           One KML per territory: import each into its own My Maps map, share it, and paste the link on the territory's page so its QR opens My Maps.
