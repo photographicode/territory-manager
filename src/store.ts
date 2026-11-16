@@ -114,6 +114,9 @@ export function useProject() {
     undo.current = [];
     setUndoCount(0);
     setProject(p);
+    // A restore or "Erase everything" is saved at once, so closing the tab straight after cannot lose it.
+    const rev = { tab: TAB, at: Date.now() };
+    void set(KEY, p).then(() => set(REV_KEY, rev)).then(() => { seen.current = rev.at; });
   }, []);
 
   return { project, update, undoLast, undoAll, undoCount, replace };
