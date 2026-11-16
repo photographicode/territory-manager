@@ -17,6 +17,8 @@ export interface SyncTerritory {
   name: string;
   mapUrl: string;
   boundary: Area;
+  /** The card's named landmarks, sent only for naming. */
+  landmarks?: { name: string; lng: number; lat: number }[];
   /** Card images; left out when only the outlines go out for naming. */
   image?: string;
   thumb?: string;
@@ -50,9 +52,15 @@ export async function collect(ts: Territory[], s: Settings, report: (text: strin
   return out;
 }
 
-/** Numbers, names, map links and outlines only (no card images): for the congregation to name the territories. */
+/** Numbers, names, map links, outlines and landmarks (no card images): for the congregation to name the territories. */
 export const outlines = (ts: Territory[], s: Settings): SyncTerritory[] =>
-  ts.map((t) => ({ number: t.number, name: t.locality || `Territory ${t.number}`, mapUrl: qrLink(t, s), boundary: t.geometry }));
+  ts.map((t) => ({
+    number: t.number,
+    name: t.locality || `Territory ${t.number}`,
+    mapUrl: qrLink(t, s),
+    boundary: t.geometry,
+    landmarks: (t.landmarks ?? []).filter((l) => l.text.trim()).map((l) => ({ name: l.text.trim().slice(0, 80), lng: l.at[0], lat: l.at[1] })),
+  }));
 
 /** Waits for the manager window to say it is ready, then sends the territories to it. */
 export function sendWhenReady(win: Window, congregation: string, territories: SyncTerritory[]): Promise<void> {

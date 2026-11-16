@@ -12,8 +12,10 @@ export function applyNames(p: Project, names: NamedTerritory[]): { project: Proj
     const n = byNumber.get(t.number);
     if (!n) return t;
     named++;
+    // A landmark that came from this card (same spot) keeps its arranged box; only new ones start on the spot.
+    const same = (pt: { lng: number; lat: number }) => t.landmarks?.find((l) => l.at[0] === pt.lng && l.at[1] === pt.lat);
     const landmarks = n.points.length
-      ? n.points.slice(0, MAX_LANDMARKS).map((pt) => ({ text: pt.name, at: [pt.lng, pt.lat] as [number, number], box: [pt.lng, pt.lat] as [number, number] }))
+      ? n.points.slice(0, MAX_LANDMARKS).map((pt) => ({ text: pt.name, at: [pt.lng, pt.lat] as [number, number], box: same(pt)?.box ?? ([pt.lng, pt.lat] as [number, number]) }))
       : t.landmarks;
     marks += n.points.length ? (landmarks?.length ?? 0) : 0;
     return { ...t, locality: n.locality || t.locality, landmarks };
