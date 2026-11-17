@@ -80,7 +80,8 @@ export function sendWhenReady(win: Window, congregation: string, territories: Sy
     const closed = setInterval(() => {
       if (!win.closed) return;
       stop();
-      reject(new Error('The territory manager window was closed before the territories were sent.'));
+      // Signing in there goes through Google, which cuts the link between the two windows: the window then looks closed.
+      reject(new Error('The territory manager window closed, or lost its link to this page while you signed in. Sign in there first, then press this button again.'));
     }, 1000);
     function stop() {
       clearTimeout(timer);
