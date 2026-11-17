@@ -47,20 +47,22 @@ export async function collect(ts: Territory[], s: Settings, report: (text: strin
     signal.throwIfAborted();
     report(`Drawing card ${i + 1} of ${ts.length}: territory ${t.number}`, i / ts.length);
     const card = await renderCard(t, s);
-    out.push({ number: t.number, name: t.locality || `Territory ${t.number}`, mapUrl: qrLink(t, s), boundary: t.geometry, image: shrink(card, IMAGE_MAX, IMAGE_Q), thumb: shrink(card, THUMB_MAX, THUMB_Q) });
+    // With the landmarks, so the admin can check them in the card review.
+    out.push({ ...outline(t, s), image: shrink(card, IMAGE_MAX, IMAGE_Q), thumb: shrink(card, THUMB_MAX, THUMB_Q) });
   }
   return out;
 }
 
+const outline = (t: Territory, s: Settings): SyncTerritory => ({
+  number: t.number,
+  name: t.locality || `Territory ${t.number}`,
+  mapUrl: qrLink(t, s),
+  boundary: t.geometry,
+  landmarks: (t.landmarks ?? []).filter((l) => l.text.trim()).map((l) => ({ name: l.text.trim().slice(0, 80), lng: l.at[0], lat: l.at[1] })),
+});
+
 /** Numbers, names, map links, outlines and landmarks (no card images): for the congregation to name the territories. */
-export const outlines = (ts: Territory[], s: Settings): SyncTerritory[] =>
-  ts.map((t) => ({
-    number: t.number,
-    name: t.locality || `Territory ${t.number}`,
-    mapUrl: qrLink(t, s),
-    boundary: t.geometry,
-    landmarks: (t.landmarks ?? []).filter((l) => l.text.trim()).map((l) => ({ name: l.text.trim().slice(0, 80), lng: l.at[0], lat: l.at[1] })),
-  }));
+export const outlines = (ts: Territory[], s: Settings): SyncTerritory[] => ts.map((t) => outline(t, s));
 
 /** Waits for the manager window to say it is ready, then sends the territories to it. */
 export function sendWhenReady(win: Window, congregation: string, territories: SyncTerritory[]): Promise<void> {
