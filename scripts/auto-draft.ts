@@ -54,7 +54,7 @@ async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
   if (!url || !key || !secret) throw new Error('SUPABASE_URL, SUPABASE_ANON_KEY and TM_AUTO_SECRET must be set');
   const res = await realFetch(`${url}/rest/v1/rpc/${name}`, {
     method: 'POST',
-    headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    headers: { apikey: key, 'Content-Type': 'application/json' }, // a publishable key goes in apikey only, never as a Bearer token
     body: JSON.stringify({ p_secret: secret, ...args }),
   });
   if (!res.ok) throw new Error(`${name} failed: HTTP ${res.status}`);
