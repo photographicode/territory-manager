@@ -1,0 +1,37 @@
+# Automatic first draft of a territory request. Supabase starts this (repository_dispatch "territory-request")
+# as soon as the request form stores a boundary file; it can also be started by hand with a request id.
+# The repository is public: the script logs counts only.
+name: Automatic territory draft
+
+on:
+  repository_dispatch:
+    types: [territory-request]
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Territory request id
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-draft-${{ github.event.client_payload.request_id || inputs.request_id }}
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/auto-draft.ts "$REQUEST_ID"
+        env:
+          REQUEST_ID: ${{ github.event.client_payload.request_id || inputs.request_id }}
+          SUPABASE_URL: https://ejosykrxjvwrhxfnputo.supabase.co
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          TM_AUTO_SECRET: ${{ secrets.TM_AUTO_SECRET }}

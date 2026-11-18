@@ -41,8 +41,9 @@ export async function readKml(file: File): Promise<ImportedShape[]> {
     if (!g) continue;
     if (g.type === 'Polygon' || g.type === 'MultiPolygon') out.push({ name, geometry: strip(g) });
     else if (g.type === 'GeometryCollection') {
-      for (const sub of g.geometries)
-        if (sub.type === 'Polygon' || sub.type === 'MultiPolygon') out.push({ name, geometry: strip(sub) });
+      // One placemark (e.g. a territory in parts, as our own export writes it) stays one shape.
+      const polys = g.geometries.flatMap((sub) => (sub.type === 'Polygon' ? [sub.coordinates] : sub.type === 'MultiPolygon' ? sub.coordinates : []));
+      if (polys.length) out.push({ name, geometry: strip(polys.length === 1 ? { type: 'Polygon', coordinates: polys[0] } : { type: 'MultiPolygon', coordinates: polys }) });
     } else if (g.type === 'LineString' && closed(g.coordinates))
       out.push({ name, geometry: { type: 'Polygon', coordinates: [g.coordinates.map((c) => [c[0], c[1]])] } });
   }
